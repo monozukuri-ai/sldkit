@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "source_id": "fluxpad-fluxpad-2",
+      "url": "https://github.com/sssata/fluxpad",
+      "revision": "8b2e752136033a81b9da01566e2e36ccafb966d6",
+      "retrieved_at": "2026-08-22T13:01:54+09:00",
+      "license": "GPL-3.0-only",
+      "license_note": "Repository license covers the project; individual supplier models remain unreviewed. Validation uses CAD/150_PLATE.SLDPRT, CAD/001_ASSEMBLY.SLDASM, and CAD/150_PLATE.SLDDRW only as fetch-only external inputs.",
+      "redistribution": "fetch_only"
+    },
+    {
+      "source_id": "panthera-ht-model",
+      "url": "https://github.com/HighTorque-Robotics/Panthera-HT_Model",
+      "revision": "735b628742b68d3d3e678165e9b9b734115a59b7",
+      "retrieved_at": "2026-08-22T13:01:54+09:00",
+      "license": "MIT",
+      "license_note": "README identifies 1_sw2024 as SolidWorks 2024 models and the repository carries an MIT license. Kept fetch-only pending artifact-level third-party review.",
+      "redistribution": "fetch_only"
+    },
+    {
+      "source_id": "mit-ocw-control-box",
+      "url": "https://ocw.mit.edu/courses/2-007-design-and-manufacturing-i-spring-2009/resources/control_box_cad/",
+      "revision": "archive-sha256:4a2bb0be2cb87064cd4e873f01a3d31ff929a19622a0bb033bff0289dca4e7f6",
+      "retrieved_at": "2026-08-22T13:01:54+09:00",
+      "license": "CC-BY-NC-SA-4.0",
+      "license_note": "MIT OpenCourseWare resource. NonCommercial and ShareAlike terms prohibit inclusion in package artifacts; local validation only.",
+      "redistribution": "fetch_only"
+    },
+    {
+      "source_id": "arig-cad-projects",
+      "url": "https://github.com/ARIG-Robotique/cad-projects",
+      "revision": "1d21ceadbe350cbb573afa2392fb4dc6f6773155",
+      "retrieved_at": "2026-08-22T13:01:54+09:00",
+      "license": "MIT",
+      "license_note": "Repository states that it contains the association's SolidWorks projects and carries an MIT license. Kept fetch-only because the broader tree includes third-party assets.",
+      "redistribution": "fetch_only"
+    },
+    {
+      "source_id": "paulggin-cryostat-sample-stage",
+      "url": "https://github.com/paulggin/solidworks-cryostat-sample-stage",
+      "revision": "77751f2461a130f7f5d9ed4111da787ecb9cc4f2",
+      "retrieved_at": "2026-08-22T14:59:52+09:00",
+      "license": "MIT",
+      "license_note": "README names Paulino Gin as author, identifies the selected native CAD files as the project's SolidWorks 2024 deliverables, and the root MIT license has no per-file exclusion. Redistribution is permitted with the MIT notice. The binaries remain unvendored by project policy; saved reference names do not form a literal Pack and Go closure.",
+      "redistribution": "allowed"
+    },
+    {
+      "source_id": "adi-industrial-dexterity-benchmarks",
+      "url": "https://github.com/analogdevicesinc/ag-industrial-dexterity-benchmarks",
+      "revision": "5f5a04c185c354b25aa26a430432a22bfa04daf5",
+      "retrieved_at": "2026-08-22T14:59:52+09:00",
+      "license": "CC-BY-SA-4.0 (root LICENSE; benchmark scope pending)",
+      "license_note": "The root contains CC-BY-SA-4.0, but README says every benchmark has a benchmark-local LICENSE and no such files exist at the pinned revision. Keep the automotive CAD selection external with redistribution unknown until the maintainer clarifies which terms apply.",
+      "redistribution": "unknown"
+    }
+  ]
+}

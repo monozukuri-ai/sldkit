@@ -1,0 +1,72 @@
+[build-system]
+requires = ["maturin>=1.11,<2"]
+build-backend = "maturin"
+
+[project]
+name = "sldkit"
+version = "0.1.0"
+description = "Source-faithful parsing foundations for SolidWorks files"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [
+    { name = "neka-nat", email = "nekanat.stock@gmail.com" },
+]
+keywords = ["cad", "parser", "solidworks", "sldprt", "sldasm", "slddrw"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/monozukuri-ai/sldkit"
+Repository = "https://github.com/monozukuri-ai/sldkit"
+Issues = "https://github.com/monozukuri-ai/sldkit/issues"
+Documentation = "https://github.com/monozukuri-ai/sldkit/tree/main/docs"
+
+[project.scripts]
+sldkit = "sldkit.cli:main"
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.23,<5",
+    "maturin>=1.11,<2",
+    "pytest>=8.4,<10",
+    "ruff>=0.8",
+]
+
+[tool.maturin]
+manifest-path = "crates/sldkit-python/Cargo.toml"
+python-source = "python"
+module-name = "sldkit._core"
+bindings = "pyo3"
+include = [
+    { path = "docs/**/*", format = "sdist" },
+]
+exclude = [
+    "reference/**",
+    "corpus/**",
+    "designs/**",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+exclude = [".venv", "reference", "target"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

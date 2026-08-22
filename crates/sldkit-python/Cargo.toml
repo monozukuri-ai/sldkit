@@ -1,0 +1,22 @@
+[package]
+name = "sldkit-python"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sldkit-core = { path = "../sldkit-core" }
+sldkit-parser = { path = "../sldkit-parser" }
+
+[lints]
+workspace = true

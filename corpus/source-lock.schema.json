@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/monozukuri-ai/sldkit/corpus/source-lock.schema.json",
+  "title": "sldkit external corpus source lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sources"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_id",
+          "url",
+          "revision",
+          "retrieved_at",
+          "license",
+          "license_note",
+          "redistribution"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]+$"
+          },
+          "url": {"type": "string", "format": "uri"},
+          "revision": {"type": "string", "minLength": 1},
+          "retrieved_at": {"type": "string", "format": "date-time"},
+          "license": {"type": "string", "minLength": 1},
+          "license_note": {"type": "string", "minLength": 1},
+          "redistribution": {
+            "enum": ["allowed", "fetch_only", "private_only", "unknown"]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import struct
+import zipfile
+import zlib
+
+import pytest
+import sldkit
+from sldkit import _core
+
+OLE2_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
+MODERN_MARKER = bytes.fromhex("140006000800")
+
+
+def modern_file(payload: bytes = b"payload", name: str = "Contents/Test") -> bytes:
+    return modern_streams(((name, payload),))
+
+
+def modern_streams(streams: tuple[tuple[str, bytes], ...]) -> bytes:
+    output = bytearray(b"SLDK" + (4).to_bytes(4, "big"))
+    for name, payload in streams:
+        output.extend(modern_frame(name, payload))
+    return bytes(output)
+
+
+def modern_frame(name: str, payload: bytes) -> bytes:
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    compressed = compressor.compress(payload) + compressor.flush()
+    encoded_name = bytes(
+        ((value << 4) & 0xF0) | (value >> 4) for value in name.encode("ascii")
+    )
+    frame = b"".join(
+        (
+            MODERN_MARKER,
+            struct.pack(
+                "<IIIII",
+                7,
+                zlib.crc32(payload),
+                len(compressed),
+                len(payload),
+                len(encoded_name),
+            ),
+            encoded_name,
+            compressed,
+        )
+    )
+    return frame
+
+
+def assembly_file(*components: tuple[str, str, str, bool]) -> bytes:
+    files = "".join(
+        f'<swFile id="{index}" swDocType="{kind}" swPath="{path}"/>'
+        for index, (path, kind, _name, _suppressed) in enumerate(components, 1)
+    )
+    references = "".join(
+        f'<swReference swModelRef="m{index}" swName="{name}" '
+        f'swSuppressed="{"YES" if suppressed else "NO"}"/>'
+        for index, (_path, _kind, name, suppressed) in enumerate(components, 1)
+    )
+    models = "".join(
+        f'<swModel id="m{index}" swFileRef="{index}" '
+        'swConfigurationName="Default"/>'
+        for index, _component in enumerate(components, 1)
+    )
+    xml = (
+        '<root><swHeader><swFile id="0" swDocType="ASSEMBLY"/>'
+        f"{files}</swHeader><swModelList>"
+        '<swModel id="self" swFileRef="0" swConfigurationId="0">'
+        '<swConfiguration swID="0" swName="Default"/>'
+        f"{references}</swModel>{models}</swModelList></root>"
+    )
+    return modern_file(xml.encode(), "swXmlContents/COMPINSTANCETREE")
+
+
+def part_file() -> bytes:
+    xml = (
+        '<root><swHeader><swFile id="0" swDocType="PART"/></swHeader>'
+        '<swModelList><swModel id="self" swFileRef="0" '
+        'swConfigurationId="0"><swConfiguration swID="0" '
+        'swName="Default"/></swModel></swModelList></root>'
+    )
+    return modern_file(xml.encode(), "swXmlContents/Features")
+
+
+def stored_zip() -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("docProps/test.xml", b"zip-payload")
+    return output.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("payload", "envelope", "confidence"),
+    [
+        (OLE2_SIGNATURE, sldkit.Envelope.OLE2_CFB, sldkit.ProbeConfidence.HIGH),
+        (b"PK\x03\x04", sldkit.Envelope.ZIP_OPC, sldkit.ProbeConfidence.HIGH),
+        (
+            b"header" + MODERN_MARKER,
+            sldkit.Envelope.MODERN_CHUNK,
+            sldkit.ProbeConfidence.MEDIUM,
+        ),
+    ],
+)
+def test_probe_bytes_uses_content(payload, envelope, confidence):
+    result = sldkit.probe_bytes(payload)
+
+    assert result.status is sldkit.ProbeStatus.RECOGNIZED
+    assert result.envelope is envelope
+    assert result.confidence is confidence
+    assert result.coverage.total_bytes == len(payload)
+    assert result.coverage.decoded_bytes == 0
+
+
+def test_parse_retains_identity_and_reports_partial_semantic_profile():
+    payload = modern_file()
+    result = sldkit.parse_bytes(payload, filename="widget.SLDPRT")
+
+    assert result.status is sldkit.ParseStatus.PARTIAL
+    assert result.document is not None
+    assert result.document.envelope.value is sldkit.Envelope.MODERN_CHUNK
+    assert result.document.document_kind.value is sldkit.DocumentKind.PART
+    assert result.document.document_kind.origin is sldkit.ValueOrigin.HINT
+    assert result.document.source.sha256 == hashlib.sha256(payload).hexdigest()
+    assert len(result.document.configurations) == 1
+    assert result.document.configurations[0].index.value == 0
+    assert result.document.configurations[0].index.origin is sldkit.ValueOrigin.INFERRED
+    assert result.inventory is not None
+    assert len(result.inventory.entries) == 1
+    assert result.semantic_coverage is not None
+    assert result.semantic_coverage.uninterpreted_streams == 1
+    assert {item.code for item in result.diagnostics} == {
+        "modern.configuration_index_inferred",
+        "format.modern_profile_partial",
+    }
+
+
+def test_malformed_and_unsupported_are_observably_distinct():
+    malformed = sldkit.parse_bytes(b"")
+    unsupported = sldkit.parse_bytes(b"not a known container")
+
+    assert malformed.status is sldkit.ParseStatus.MALFORMED
+    assert malformed.diagnostics[0].kind is sldkit.DiagnosticKind.MALFORMED
+    assert unsupported.status is sldkit.ParseStatus.UNSUPPORTED
+    assert unsupported.diagnostics[0].kind is sldkit.DiagnosticKind.UNSUPPORTED
+
+
+def test_strict_mode_retains_result_on_exception():
+    with pytest.raises(sldkit.ParseError) as caught:
+        sldkit.parse_bytes(modern_file(), strict=True)
+
+    assert caught.value.result.status is sldkit.ParseStatus.PARTIAL
+
+
+def test_modern_properties_keep_present_empty_missing_and_unsupported_distinct():
+    model = (
+        b'<root><swHeader><swFile swDocType="PART"/></swHeader><swModelList>'
+        b'<swModel swConfigurationId="0">'
+        b'<swConfiguration swID="0" swName="Default"/>'
+        b"</swModel></swModelList></root>"
+    )
+    properties = (
+        b'<root><propertySection name="UserDefinedProperties">'
+        b'<property name="present"><lpwstr>value</lpwstr></property>'
+        b'<property name="empty"><lpwstr></lpwstr></property>'
+        b'<property name="missing"/>'
+        b'<property name="opaque"><blob>0102</blob></property>'
+        b"</propertySection></root>"
+    )
+    payload = modern_streams(
+        (
+            ("swXmlContents/Features", model),
+            ("docProps/custom.xml", properties),
+        )
+    )
+
+    result = sldkit.parse_bytes(payload, filename="fixture.SLDPRT")
+
+    assert result.document is not None
+    states = {
+        item.name.value: (
+            item.value_state,
+            None if item.raw_value is None else item.raw_value.value,
+        )
+        for item in result.document.properties
+    }
+    assert states == {
+        "present": (sldkit.PropertyValueState.PRESENT, "value"),
+        "empty": (sldkit.PropertyValueState.EMPTY, ""),
+        "missing": (sldkit.PropertyValueState.MISSING, None),
+        "opaque": (sldkit.PropertyValueState.UNSUPPORTED_TYPE, "0102"),
+    }
+    assert [item.code for item in result.diagnostics].count(
+        "modern.property_type_unsupported"
+    ) == 1
+    assert [item.code for item in result.diagnostics].count(
+        "modern.property_value_missing"
+    ) == 1
+    assert result.semantic_coverage is not None
+    assert result.to_dict()["document"]["properties"][2]["raw_value"] is None
+
+
+def test_malformed_modern_xml_remains_a_stream_diagnostic():
+    model = b'<root><swHeader><swFile swDocType="PART"/></swHeader></root>'
+    payload = modern_streams(
+        (
+            ("swXmlContents/Features", model),
+            ("docProps/custom.xml", b"<root><propertySection>"),
+        )
+    )
+
+    result = sldkit.parse_bytes(payload, filename="fixture.SLDPRT")
+
+    assert result.status is sldkit.ParseStatus.PARTIAL
+    assert result.document is not None
+    assert result.document.document_kind.value is sldkit.DocumentKind.PART
+    assert any(item.code == "modern.xml_malformed" for item in result.diagnostics)
+    assert any(
+        item.stream_path == "docProps/custom.xml"
+        and item.reason_code == "semantic.stream_malformed"
+        for item in result.document.unknown_records
+    )
+
+
+def test_path_entry_points_record_path_source(tmp_path):
+    path = tmp_path / "assembly.SLDASM"
+    path.write_bytes(modern_file())
+
+    probe = sldkit.probe_file(path)
+    parsed = sldkit.parse_file(path)
+
+    assert probe.status is sldkit.ProbeStatus.RECOGNIZED
+    assert parsed.document is not None
+    assert parsed.document.source.input_kind is sldkit.SourceInputKind.PATH
+    assert parsed.document.document_kind.value is sldkit.DocumentKind.ASSEMBLY
+
+
+def test_inspect_is_deterministic_and_extracts_both_representations():
+    payload = modern_file(b"decoded-payload")
+
+    first = sldkit.inspect_bytes(payload)
+    second = sldkit.inspect_bytes(payload)
+
+    assert first.status is sldkit.InventoryStatus.COMPLETE
+    assert first.to_dict() == second.to_dict()
+    assert first.inventory is not None
+    entry = first.inventory.entries[0]
+    assert entry.checksum is sldkit.ChecksumStatus.VERIFIED
+    assert first.coverage.uninterpreted_bytes == 0
+
+    decoded = sldkit.extract_bytes(payload, entry.id)
+    stored = sldkit.extract_bytes(
+        payload, entry.id, mode=sldkit.ExtractionMode.STORED
+    )
+    assert decoded.result.status is sldkit.ExtractionStatus.EXTRACTED
+    assert decoded.data == b"decoded-payload"
+    assert stored.data is not None
+    assert stored.data != decoded.data
+
+
+def test_zip_inventory_detects_content_without_decoding_opc_semantics():
+    payload = stored_zip()
+    result = sldkit.inspect_bytes(payload, filename="package.bin")
+
+    assert result.status is sldkit.InventoryStatus.COMPLETE
+    assert result.inventory is not None
+    assert result.inventory.envelope is sldkit.Envelope.ZIP_OPC
+    assert result.inventory.entries[0].path == "docProps/test.xml"
+    assert any(
+        item.code == "input.extension_mismatch" for item in result.diagnostics
+    )
+
+
+def test_full_inventory_rejects_corruption_and_declared_bomb():
+    corrupted = bytearray(modern_file())
+    corrupted[18] ^= 1
+    malformed = sldkit.inspect_bytes(corrupted)
+    assert malformed.status is sldkit.InventoryStatus.MALFORMED
+    assert any(
+        item.code == "modern.checksum_mismatch" and item.offset is not None
+        for item in malformed.diagnostics
+    )
+
+    bomb = bytearray(modern_file(b"x"))
+    bomb[26:30] = (1_000_000).to_bytes(4, "little")
+    rejected = sldkit.inspect_bytes(bomb, profile=sldkit.LimitProfile.SERVICE)
+    assert rejected.status is sldkit.InventoryStatus.REJECTED
+    assert any(
+        item.code == "limit.compression_ratio" for item in rejected.diagnostics
+    )
+
+
+def test_signature_only_ole2_is_probe_candidate_but_malformed_container():
+    result = sldkit.inspect_bytes(OLE2_SIGNATURE)
+
+    assert result.status is sldkit.InventoryStatus.MALFORMED
+    assert result.diagnostics[0].code == "ole2.truncated_header"
+    assert result.diagnostics[0].offset == len(OLE2_SIGNATURE)
+
+
+def test_unknown_limit_profile_is_rejected():
+    with pytest.raises(ValueError, match="unknown resource-limit profile"):
+        sldkit.probe_bytes(OLE2_SIGNATURE, profile="unbounded")
+
+
+def test_project_scan_resolves_graph_and_matches_native_json(tmp_path):
+    private = tmp_path / "private"
+    private.mkdir()
+    root = tmp_path / "root.SLDASM"
+    child = private / "child.SLDPRT"
+    root.write_bytes(
+        assembly_file(("private/child.SLDPRT", "PART", "child-1", False))
+    )
+    child.write_bytes(part_file())
+
+    result = sldkit.scan_project(
+        root,
+        project_root=tmp_path,
+        configuration="Default",
+        profile=sldkit.LimitProfile.SERVICE,
+    )
+    native = json.loads(
+        _core.scan_project_json(
+            str(root), str(tmp_path), "Default", [], [], False, "service"
+        )
+    )
+
+    assert result.status is sldkit.ProjectScanStatus.COMPLETE
+    assert result.to_dict() == native
+    assert len(result.nodes) == 2
+    assert len(result.edges) == 1
+    assert result.edges[0].stored_path == "private/child.SLDPRT"
+    assert result.edges[0].resolved_path == "private/child.SLDPRT"
+    assert result.edges[0].resolution_basis is (
+        sldkit.ReferenceResolutionBasis.DOCUMENT_RELATIVE
+    )
+    assert result.edges[0].traversal_status is (
+        sldkit.ReferenceTraversalStatus.FOLLOWED
+    )
+    assert "private" not in json.dumps(result.compatibility_report.to_dict())
+
+
+def test_project_scan_rejects_unparseable_root(tmp_path):
+    root = tmp_path / "root.SLDASM"
+    root.write_bytes(b"not a SolidWorks container")
+
+    result = sldkit.scan_project(root)
+
+    assert result.status is sldkit.ProjectScanStatus.REJECTED
+    assert result.nodes[0].parse_status is sldkit.ParseStatus.UNSUPPORTED
+    assert any(
+        diagnostic.code == "project.root_parse_unavailable"
+        for diagnostic in result.diagnostics
+    )

@@ -1,0 +1,41 @@
+[workspace]
+members = [
+    "crates/sldkit-core",
+    "crates/sldkit-container",
+    "crates/sldkit-parser",
+    "crates/sldkit-python",
+    "crates/sldkit-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+description = "Source-faithful parsing foundations for SolidWorks files"
+license = "MIT"
+repository = "https://github.com/monozukuri-ai/sldkit"
+homepage = "https://github.com/monozukuri-ai/sldkit"
+readme = "README.md"
+
+[workspace.dependencies]
+cfb = "0.14.0"
+clap = { version = "4.6.6", features = ["derive"] }
+crc32fast = "1.5.0"
+flate2 = "1.1.9"
+pyo3 = { version = "0.29.2", features = ["extension-module"] }
+roxmltree = "0.21.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+thiserror = "2.0.20"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

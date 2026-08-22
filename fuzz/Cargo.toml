@@ -1,0 +1,25 @@
+[package]
+name = "sldkit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+crc32fast = "1.5.0"
+flate2 = "1.1.9"
+libfuzzer-sys = "0.4.13"
+sldkit-core = { path = "../crates/sldkit-core" }
+sldkit-parser = { path = "../crates/sldkit-parser" }
+
+[[bin]]
+name = "inventory"
+path = "fuzz_targets/inventory.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

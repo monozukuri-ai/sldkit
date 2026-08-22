@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/monozukuri-ai/sldkit/corpus/manifest.schema.json",
+  "title": "sldkit corpus artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_id",
+    "document_kind",
+    "corpus_class",
+    "local_path",
+    "source_id",
+    "sha256",
+    "byte_size",
+    "license",
+    "copyright_holder",
+    "redistribution",
+    "provenance",
+    "envelope",
+    "internal_version",
+    "product_version",
+    "dependencies",
+    "expected_facts",
+    "ground_truth",
+    "known_results",
+    "unresolved"
+  ],
+  "properties": {
+    "artifact_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
+    "document_kind": {
+      "enum": ["part", "assembly", "drawing", "unknown", "negative"]
+    },
+    "corpus_class": {
+      "enum": ["synthetic", "audited_public", "external", "private"]
+    },
+    "local_path": {"type": ["string", "null"]},
+    "source_id": {"type": ["string", "null"]},
+    "source_path": {
+      "description": "Path at the pinned source revision; null for non-tree sources",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        {"type": "null"}
+      ]
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "byte_size": {"type": "integer", "minimum": 0},
+    "license": {"type": "string", "minLength": 1},
+    "copyright_holder": {"type": "string", "minLength": 1},
+    "redistribution": {
+      "enum": ["allowed", "fetch_only", "private_only", "unknown"]
+    },
+    "provenance": {"enum": ["authored", "third_party", "mixed", "unknown"]},
+    "envelope": {"enum": ["modern_chunk", "ole2_cfb", "zip_opc", "unknown"]},
+    "internal_version": {"type": ["integer", "null"], "minimum": 0},
+    "product_version": {"type": ["string", "null"]},
+    "dependencies": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "reference_closure": {
+      "description": "Audit state of references needed to reopen the document set",
+      "enum": [
+        "not_applicable",
+        "closed",
+        "declared_unresolved",
+        "not_audited"
+      ]
+    },
+    "expected_facts": {"type": "object"},
+    "ground_truth": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["method", "tool", "tool_version", "recorded_at"],
+        "properties": {
+          "method": {"type": "string", "minLength": 1},
+          "tool": {"type": "string", "minLength": 1},
+          "tool_version": {"type": "string", "minLength": 1},
+          "recorded_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "minItems": 1
+    },
+    "known_results": {"type": "object"},
+    "unresolved": {"type": "array", "items": {"type": "string"}}
+  }
+}

@@ -1,0 +1,113 @@
+name: Wheel smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel-smoke:
+    name: ${{ matrix.name }} / CPython 3.13
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            target: x86_64
+            interpreter: python3.13
+            manylinux: "2_28"
+            artifact: linux-x86_64
+          - name: Windows x86_64
+            runner: windows-latest
+            target: x64
+            interpreter: python
+            manylinux: "off"
+            artifact: windows-x86_64
+          - name: macOS arm64
+            runner: macos-15
+            target: aarch64
+            interpreter: python
+            manylinux: "off"
+            artifact: macos-arm64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Show runtime identity
+        run: python -c "import platform, sys; print(sys.version); print(platform.platform()); print(platform.machine())"
+      - name: Build wheel
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          maturin-version: v1.14.1
+          args: >-
+            --release --locked --out dist -i ${{ matrix.interpreter }}
+          sccache: true
+      - name: Inspect artifact
+        run: python scripts/verify_release_artifacts.py dist
+      - name: Isolated install and smoke
+        run: python scripts/smoke_wheel_artifact.py dist
+      - name: Upload wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: sldkit-wheel-${{ matrix.artifact }}-cp313
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist-roundtrip:
+    name: sdist round-trip / CPython 3.13
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Build sdist
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          command: sdist
+          maturin-version: v1.14.1
+          args: --out dist/sdist
+      - name: Inspect sdist
+        run: python scripts/verify_release_artifacts.py dist/sdist
+      - name: Extract sdist
+        run: |
+          mkdir -p dist/source
+          tar -xzf dist/sdist/sldkit-*.tar.gz -C dist/source
+      # Maturin currently keeps workspace-only CLI entries in the sdist lockfile.
+      # Let Cargo remove only packages outside the reduced sdist workspace before
+      # requiring --locked for the actual wheel build (maturin issue #2609).
+      - name: Synchronize reduced workspace lockfile
+        working-directory: dist/source/sldkit-0.1.0
+        run: cargo metadata --format-version 1 > /dev/null
+      - name: Build wheel from sdist
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          working-directory: dist/source/sldkit-0.1.0
+          target: x86_64
+          manylinux: "2_28"
+          maturin-version: v1.14.1
+          args: --release --locked --out dist -i python3.13
+          sccache: true
+      - name: Inspect and smoke round-trip wheel
+        run: |
+          python scripts/verify_release_artifacts.py \
+            dist/sdist dist/source/sldkit-0.1.0/dist
+          python scripts/smoke_wheel_artifact.py \
+            dist/source/sldkit-0.1.0/dist
+      - name: Upload round-trip artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: sldkit-sdist-roundtrip-cp313
+          path: |
+            dist/sdist/*.tar.gz
+            dist/source/sldkit-0.1.0/dist/*.whl
+          if-no-files-found: error

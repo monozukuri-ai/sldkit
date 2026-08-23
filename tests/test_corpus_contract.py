@@ -85,7 +85,9 @@ def test_no_unmanifested_cad_binary_is_vendored_in_corpus():
     vendored = {
         path.relative_to(ROOT).as_posix()
         for path in CORPUS.rglob("*")
-        if path.is_file() and path.suffix.lower() in CAD_SUFFIXES
+        if path.is_file()
+        and path.suffix.lower() in CAD_SUFFIXES
+        and path.relative_to(CORPUS).parts[0] not in {"cache", "external"}
     }
     manifested = {
         entry["local_path"]

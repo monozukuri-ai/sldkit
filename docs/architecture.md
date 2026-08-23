@@ -27,12 +27,21 @@ An input follows this sequence:
    supported.
 4. **Parse** converts recognized document metadata into source-faithful values
    with evidence and diagnostics.
-5. **Scan** resolves decoded document references within explicit filesystem
+5. **Geometry** explicitly decodes modern Part topology, carriers, and
+   tessellation with provenance and a loss report.
+6. **Scan** resolves decoded document references within explicit filesystem
    roots and produces a dependency graph.
 
 Each stage has its own result status. A recognized container does not imply that
-all document semantics were decoded, and a complete reference graph does not
-imply complete geometry or feature coverage.
+all document semantics were decoded. Geometry success is reported separately,
+and a complete reference graph does not imply complete geometry or feature
+coverage.
+
+Modern and legacy inputs share the same source model, but only when the source
+provides the corresponding fact. For example, a legacy file may provide core
+properties and a preview while references and geometry remain absent and
+explicitly uninterpreted. Values unavailable in one envelope are not populated
+from defaults observed in another envelope.
 
 ## Source-faithful values
 
@@ -57,3 +66,8 @@ results rather than unbounded allocation or recursion.
 The source model is the public output boundary. Conversion to a shared CAD IR
 belongs in a separate adapter so that source uncertainty, unsupported fields,
 and format-specific evidence are not lost inside the parser.
+
+The modern Part geometry model follows the same boundary. It exposes
+source-oriented topology, carrier parameters, tessellation, exact stream
+identity, and loss records; it does not expose a downstream kernel handle or a
+shared interchange model. See [Modern Part geometry](geometry.md).

@@ -5,6 +5,7 @@ boundaries of `sldkit`.
 
 - [Architecture](architecture.md): package responsibilities and data flow
 - [Compatibility](compatibility.md): supported and unsupported capabilities
+- [Modern Part geometry](geometry.md): topology, carriers, tessellation, and fidelity
 - [Project scanning](project-scanning.md): reference-resolution behavior
 - [Parser provenance](parser-provenance.md): evidence and contribution policy
 

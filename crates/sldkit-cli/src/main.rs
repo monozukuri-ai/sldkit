@@ -3,15 +3,15 @@ use std::{fs::OpenOptions, io::Write, path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use sldkit_core::{
-    ExtractionMode, ExtractionStatus, InventoryStatus, LimitProfile, ParseStatus, ProbeStatus,
-    ProjectScanStatus, ResourceLimits,
+    ExtractionMode, ExtractionStatus, GeometryStatus, InventoryStatus, LimitProfile, ParseStatus,
+    ProbeStatus, ProjectScanStatus, ResourceLimits,
 };
 
 #[derive(Debug, Parser)]
 #[command(
     name = "sldkit-rs",
     version,
-    about = "Inspect SolidWorks containers and source metadata"
+    about = "Inspect and decode supported SolidWorks source data"
 )]
 struct Args {
     #[command(subcommand)]
@@ -47,6 +47,12 @@ enum Command {
     },
     /// Return source-native facts, diagnostics, and semantic coverage.
     Parse {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
+        limits: LimitArg,
+    },
+    /// Decode modern Part B-Rep topology, geometry carriers, and tessellation.
+    Geometry {
         path: PathBuf,
         #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
         limits: LimitArg,
@@ -172,6 +178,7 @@ fn run(args: Args) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 ParseStatus::Malformed | ParseStatus::Rejected => ExitCode::from(2),
             })
         }
+        Command::Geometry { path, limits } => run_geometry(path, limits),
         Command::Scan {
             path,
             project_root,
@@ -206,6 +213,16 @@ fn run(args: Args) -> Result<ExitCode, Box<dyn std::error::Error>> {
             })
         }
     }
+}
+
+fn run_geometry(path: PathBuf, limits: LimitArg) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let result = sldkit_parser::decode_geometry_path(path, &limits.limits());
+    write_json(&result)?;
+    Ok(match result.status {
+        GeometryStatus::Decoded | GeometryStatus::Partial => ExitCode::SUCCESS,
+        GeometryStatus::Unsupported => ExitCode::from(1),
+        GeometryStatus::Malformed | GeometryStatus::Rejected => ExitCode::from(2),
+    })
 }
 
 fn parse_windows_prefix_mapping(

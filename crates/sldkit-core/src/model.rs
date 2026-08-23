@@ -100,6 +100,7 @@ pub enum PropertyScope {
 #[serde(rename_all = "snake_case")]
 pub enum BinaryResourceKind {
     PreviewPng,
+    PreviewDib,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

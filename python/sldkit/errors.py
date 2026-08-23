@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .model import ParseResult
+    from .model import GeometryResult, ParseResult
 
 
 class SldkitError(Exception):
@@ -17,4 +17,16 @@ class ParseError(SldkitError):
         self.result = result
         codes = ", ".join(item.code for item in result.diagnostics) or "none"
         message = f"strict parsing rejected status={result.status.value}; {codes}"
+        super().__init__(message)
+
+
+class GeometryError(SldkitError):
+    """Raised by strict geometry decoding while retaining the structured result."""
+
+    def __init__(self, result: GeometryResult) -> None:
+        self.result = result
+        codes = ", ".join(item.code for item in result.diagnostics) or "none"
+        message = (
+            f"strict geometry decoding rejected status={result.status.value}; {codes}"
+        )
         super().__init__(message)

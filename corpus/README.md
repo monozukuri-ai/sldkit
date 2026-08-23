@@ -1,7 +1,8 @@
 # Validation corpus metadata
 
 The repository records validation-input provenance separately from parser code.
-SolidWorks CAD binaries are not vendored or included in package artifacts.
+SolidWorks CAD binaries and paired neutral exports are not vendored or included
+in package artifacts.
 
 - `manifest.jsonl` records immutable artifact hashes, expected facts, rights
   status, and validation methods.

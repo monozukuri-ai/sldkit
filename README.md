@@ -11,10 +11,11 @@ as a typed Python package through PyO3.
 | Container detection and bounded inventory | Modern chunk, OLE2/CFB, and ZIP/OPC candidates |
 | Stored and decoded stream extraction | Supported where the container decoder recognizes the encoding |
 | Modern metadata, properties, configurations, and references | Partial, source-faithful profile |
+| Modern `.SLDPRT` B-Rep and tessellation | Explicit partial profile with provenance and loss records |
 | Directory project graph | Bounded and deterministic for decoded references |
-| Legacy OLE2/CFB document semantics | Unsupported |
+| Legacy OLE2/CFB metadata, properties, configurations, and previews | Partial, bounded profile for observed layouts |
 | ZIP/OPC document semantics | Unsupported |
-| B-Rep, feature history, mates, and occurrence transforms | Unsupported |
+| Feature history, mates, and occurrence transforms | Unsupported |
 | Drawing entities, dimensions, and view transforms | Unsupported |
 
 The package returns structured diagnostics and byte coverage. Missing,
@@ -49,6 +50,14 @@ for prop in result.document.properties if result.document else ():
 for diagnostic in result.diagnostics:
     print(diagnostic.code, diagnostic.kind, diagnostic.message)
 
+geometry = sldkit.decode_geometry_file("part.SLDPRT")
+if geometry.geometry is not None:
+    print(len(geometry.geometry.model.bodies))
+    for metric in geometry.geometry.topology_metrics:
+        print(metric.body_id, metric.faces, metric.edges, metric.vertices)
+    for loss in geometry.geometry.fidelity.losses:
+        print(loss.code, loss.category, loss.severity)
+
 graph = sldkit.scan_project(
     "project/top.SLDASM",
     project_root="project",
@@ -59,7 +68,8 @@ for edge in graph.edges:
 ```
 
 Use `strict=True` with `parse_file` or `parse_bytes` when an unsupported or
-partial result must raise `sldkit.ParseError`.
+partial result must raise `sldkit.ParseError`. Geometry decoding has the same
+option and raises `sldkit.GeometryError` unless its status is `decoded`.
 
 If no configuration is selected, the graph is the union of all decoded source
 configurations. Configuration names are matched exactly. Suppressed references

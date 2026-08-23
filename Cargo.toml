@@ -11,6 +11,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Source-faithful parsing foundations for SolidWorks files"
 license = "MIT"
 repository = "https://github.com/monozukuri-ai/sldkit"
@@ -18,6 +19,9 @@ homepage = "https://github.com/monozukuri-ai/sldkit"
 readme = "README.md"
 
 [workspace.dependencies]
+cadmpeg-codec-sldprt = "=0.5.3"
+cadmpeg-core = "=0.5.3"
+cadmpeg-ir = "=0.5.3"
 cfb = "0.14.0"
 clap = { version = "4.6.6", features = ["derive"] }
 crc32fast = "1.5.0"

@@ -47,6 +47,7 @@ class PropertyScope(_StringEnum):
 
 class BinaryResourceKind(_StringEnum):
     PREVIEW_PNG = "preview_png"
+    PREVIEW_DIB = "preview_dib"
 
 
 class ReferenceKind(_StringEnum):
@@ -202,6 +203,59 @@ class LimitProfile(_StringEnum):
     SERVICE = "service"
 
 
+class GeometryStatus(_StringEnum):
+    DECODED = "decoded"
+    PARTIAL = "partial"
+    UNSUPPORTED = "unsupported"
+    MALFORMED = "malformed"
+    REJECTED = "rejected"
+
+
+class GeometryStreamRole(_StringEnum):
+    PARASOLID_PARTITION = "parasolid_partition"
+    PARASOLID_DELTAS = "parasolid_deltas"
+    TESSELLATION = "tessellation"
+
+
+class GeometryStreamSelection(_StringEnum):
+    ACTIVE = "active"
+    ALTERNATE = "alternate"
+    SUPPORTING = "supporting"
+    CANDIDATE = "candidate"
+
+
+class GeometryExactness(_StringEnum):
+    BYTE_EXACT = "byte_exact"
+    DERIVED = "derived"
+    INFERRED = "inferred"
+    UNKNOWN = "unknown"
+
+
+class GeometryBytePartitionStatus(_StringEnum):
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+
+
+class GeometryByteStorage(_StringEnum):
+    DIRECT = "direct"
+    WRAPPED_ZLIB = "wrapped_zlib"
+
+
+class GeometryByteOffsetBasis(_StringEnum):
+    PARASOLID_BODY = "parasolid_body"
+
+
+class GeometryCarrierDomain(_StringEnum):
+    SURFACE = "surface"
+    CURVE = "curve"
+    PCURVE = "pcurve"
+
+
+class GeometryConstructionDomain(_StringEnum):
+    SURFACE = "surface"
+    CURVE = "curve"
+
+
 @dataclass(frozen=True, slots=True)
 class Diagnostic:
     code: str
@@ -310,8 +364,7 @@ class InventoryEntry:
             stored_sha256=_optional_str(value.get("stored_sha256")),
             decoded_sha256=_optional_str(value.get("decoded_sha256")),
             attributes={
-                str(key): str(item)
-                for key, item in value.get("attributes", {}).items()
+                str(key): str(item) for key, item in value.get("attributes", {}).items()
             },
         )
 
@@ -356,8 +409,7 @@ class ContainerInventory:
                 InventoryEntry.from_dict(item) for item in value.get("entries", [])
             ),
             attributes={
-                str(key): str(item)
-                for key, item in value.get("attributes", {}).items()
+                str(key): str(item) for key, item in value.get("attributes", {}).items()
             },
         )
 
@@ -386,9 +438,7 @@ class InventoryResult:
         return cls(
             status=InventoryStatus(value["status"]),
             inventory=(
-                None
-                if inventory is None
-                else ContainerInventory.from_dict(inventory)
+                None if inventory is None else ContainerInventory.from_dict(inventory)
             ),
             diagnostics=tuple(
                 Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
@@ -403,9 +453,7 @@ class InventoryResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,
-            "inventory": (
-                None if self.inventory is None else self.inventory.to_dict()
-            ),
+            "inventory": (None if self.inventory is None else self.inventory.to_dict()),
             "diagnostics": [item.to_dict() for item in self.diagnostics],
             "coverage": self.coverage.to_dict(),
             "uninterpreted_ranges": [
@@ -663,9 +711,7 @@ class AssemblyComponent:
             configuration_index=int(value["configuration_index"]),
             instance_name=_optional_sourced(value.get("instance_name"), str),
             stored_path=_optional_sourced(value.get("stored_path"), str),
-            document_kind=_optional_sourced(
-                value.get("document_kind"), DocumentKind
-            ),
+            document_kind=_optional_sourced(value.get("document_kind"), DocumentKind),
             referenced_configuration=_optional_sourced(
                 value.get("referenced_configuration"), str
             ),
@@ -674,9 +720,7 @@ class AssemblyComponent:
             ),
             is_suppressed=_optional_sourced(value.get("is_suppressed"), bool),
             is_hidden=_optional_sourced(value.get("is_hidden"), bool),
-            exclude_from_bom=_optional_sourced(
-                value.get("exclude_from_bom"), bool
-            ),
+            exclude_from_bom=_optional_sourced(value.get("exclude_from_bom"), bool),
             source_model_ref=_optional_str(value.get("source_model_ref")),
             raw_attributes={
                 str(key): str(item)
@@ -690,9 +734,7 @@ class AssemblyComponent:
             "instance_name": _sourced_dict(self.instance_name),
             "stored_path": _sourced_dict(self.stored_path),
             "document_kind": _sourced_dict(self.document_kind),
-            "referenced_configuration": _sourced_dict(
-                self.referenced_configuration
-            ),
+            "referenced_configuration": _sourced_dict(self.referenced_configuration),
             "component_reference": _sourced_dict(self.component_reference),
             "is_suppressed": _sourced_dict(self.is_suppressed),
             "is_hidden": _sourced_dict(self.is_hidden),
@@ -728,9 +770,7 @@ class Configuration:
             ),
             parent_name=_optional_sourced(value.get("parent_name"), str),
             parent_index=_optional_sourced(value.get("parent_index"), int),
-            preview=(
-                None if preview is None else BinaryResource.from_dict(preview)
-            ),
+            preview=(None if preview is None else BinaryResource.from_dict(preview)),
             mass_properties=(
                 None
                 if mass_properties is None
@@ -750,9 +790,7 @@ class Configuration:
             "parent_index": _sourced_dict(self.parent_index),
             "preview": None if self.preview is None else self.preview.to_dict(),
             "mass_properties": (
-                None
-                if self.mass_properties is None
-                else self.mass_properties.to_dict()
+                None if self.mass_properties is None else self.mass_properties.to_dict()
             ),
         }
         if self.alternate_names:
@@ -824,9 +862,7 @@ class DocumentReference:
             source_name=_optional_sourced(value.get("source_name"), str),
             stored_path=_optional_sourced(value.get("stored_path"), str),
             resolved_path=_optional_str(value.get("resolved_path")),
-            document_kind=_optional_sourced(
-                value.get("document_kind"), DocumentKind
-            ),
+            document_kind=_optional_sourced(value.get("document_kind"), DocumentKind),
             configuration=_optional_sourced(value.get("configuration"), str),
             configuration_index=_optional_int(value.get("configuration_index")),
         )
@@ -868,9 +904,7 @@ class DrawingView:
             "source_id": self.source_id,
             "name": _sourced_dict(self.name),
             "referenced_document": _sourced_dict(self.referenced_document),
-            "referenced_configuration": _sourced_dict(
-                self.referenced_configuration
-            ),
+            "referenced_configuration": _sourced_dict(self.referenced_configuration),
         }
 
 
@@ -887,12 +921,8 @@ class DrawingSheet:
         return cls(
             source_id=_optional_str(value.get("source_id")),
             name=_optional_sourced(value.get("name"), str),
-            preview=(
-                None if preview is None else BinaryResource.from_dict(preview)
-            ),
-            views=tuple(
-                DrawingView.from_dict(item) for item in value.get("views", [])
-            ),
+            preview=(None if preview is None else BinaryResource.from_dict(preview)),
+            views=tuple(DrawingView.from_dict(item) for item in value.get("views", [])),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -942,6 +972,1217 @@ class UnknownRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class GeometryStreamCandidate:
+    entry_id: str
+    stream_path: str
+    role: GeometryStreamRole
+    selection: GeometryStreamSelection
+    decoded_size: int | None
+    decoded_sha256: str | None
+    selection_evidence: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryStreamCandidate:
+        return cls(
+            entry_id=str(value["entry_id"]),
+            stream_path=str(value["stream_path"]),
+            role=GeometryStreamRole(value["role"]),
+            selection=GeometryStreamSelection(value["selection"]),
+            decoded_size=_optional_int(value.get("decoded_size")),
+            decoded_sha256=_optional_str(value.get("decoded_sha256")),
+            selection_evidence=tuple(
+                str(item) for item in value.get("selection_evidence", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = {
+            "entry_id": self.entry_id,
+            "stream_path": self.stream_path,
+            "role": self.role.value,
+            "selection": self.selection.value,
+            "decoded_size": self.decoded_size,
+            "decoded_sha256": self.decoded_sha256,
+        }
+        if self.selection_evidence:
+            result["selection_evidence"] = list(self.selection_evidence)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryEntityProvenance:
+    stream: str | None
+    offset: int | None
+    tag: str | None
+    exactness: GeometryExactness
+    field_exactness: Mapping[str, GeometryExactness] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryEntityProvenance:
+        return cls(
+            stream=_optional_str(value.get("stream")),
+            offset=_optional_int(value.get("offset")),
+            tag=_optional_str(value.get("tag")),
+            exactness=GeometryExactness(value["exactness"]),
+            field_exactness={
+                str(name): GeometryExactness(item)
+                for name, item in value.get("field_exactness", {}).items()
+            },
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "stream": self.stream,
+            "offset": self.offset,
+            "tag": self.tag,
+            "exactness": self.exactness.value,
+        }
+        if self.field_exactness:
+            result["field_exactness"] = {
+                name: item.value for name, item in self.field_exactness.items()
+            }
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometrySourceObject:
+    format: str
+    object_id: str
+    name: str | None
+    color: tuple[float, float, float, float] | None
+    visible: bool | None
+    layer: str | None
+    instance_path: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometrySourceObject:
+        return cls(
+            format=str(value["format"]),
+            object_id=str(value["object_id"]),
+            name=_optional_str(value.get("name")),
+            color=_optional_float_quad(value.get("color")),
+            visible=_optional_bool(value.get("visible")),
+            layer=_optional_str(value.get("layer")),
+            instance_path=tuple(str(item) for item in value.get("instance_path", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "format": self.format,
+            "object_id": self.object_id,
+            "name": self.name,
+            "color": None if self.color is None else list(self.color),
+            "visible": self.visible,
+            "layer": self.layer,
+        }
+        if self.instance_path:
+            result["instance_path"] = list(self.instance_path)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryBody:
+    id: str
+    kind: str
+    region_ids: tuple[str, ...]
+    transform: Any | None
+    name: str | None
+    color: tuple[float, float, float, float] | None
+    visible: bool | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryBody:
+        return cls(
+            id=str(value["id"]),
+            kind=str(value["kind"]),
+            region_ids=tuple(str(item) for item in value.get("region_ids", [])),
+            transform=value.get("transform"),
+            name=_optional_str(value.get("name")),
+            color=_optional_float_quad(value.get("color")),
+            visible=_optional_bool(value.get("visible")),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "region_ids": list(self.region_ids),
+            "transform": self.transform,
+            "name": self.name,
+            "color": None if self.color is None else list(self.color),
+            "visible": self.visible,
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryRegion:
+    id: str
+    body_id: str
+    shell_ids: tuple[str, ...]
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryRegion:
+        return cls(
+            id=str(value["id"]),
+            body_id=str(value["body_id"]),
+            shell_ids=tuple(str(item) for item in value.get("shell_ids", [])),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "body_id": self.body_id,
+            "shell_ids": list(self.shell_ids),
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryShell:
+    id: str
+    region_id: str
+    face_ids: tuple[str, ...]
+    wire_edge_ids: tuple[str, ...]
+    free_vertex_ids: tuple[str, ...]
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryShell:
+        return cls(
+            id=str(value["id"]),
+            region_id=str(value["region_id"]),
+            face_ids=tuple(str(item) for item in value.get("face_ids", [])),
+            wire_edge_ids=tuple(str(item) for item in value.get("wire_edge_ids", [])),
+            free_vertex_ids=tuple(
+                str(item) for item in value.get("free_vertex_ids", [])
+            ),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "region_id": self.region_id,
+            "face_ids": list(self.face_ids),
+            "provenance": self.provenance.to_dict(),
+        }
+        if self.wire_edge_ids:
+            result["wire_edge_ids"] = list(self.wire_edge_ids)
+        if self.free_vertex_ids:
+            result["free_vertex_ids"] = list(self.free_vertex_ids)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryFace:
+    id: str
+    shell_id: str
+    surface_id: str
+    sense: str
+    loop_ids: tuple[str, ...]
+    name: str | None
+    color: tuple[float, float, float, float] | None
+    tolerance: float | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryFace:
+        return cls(
+            id=str(value["id"]),
+            shell_id=str(value["shell_id"]),
+            surface_id=str(value["surface_id"]),
+            sense=str(value["sense"]),
+            loop_ids=tuple(str(item) for item in value.get("loop_ids", [])),
+            name=_optional_str(value.get("name")),
+            color=_optional_float_quad(value.get("color")),
+            tolerance=_optional_float(value.get("tolerance")),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "shell_id": self.shell_id,
+            "surface_id": self.surface_id,
+            "sense": self.sense,
+            "loop_ids": list(self.loop_ids),
+            "name": self.name,
+            "color": None if self.color is None else list(self.color),
+            "tolerance": self.tolerance,
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryPcurveUse:
+    pcurve_id: str
+    isoparametric: bool | None
+    parameter_range: tuple[float, float] | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryPcurveUse:
+        return cls(
+            pcurve_id=str(value["pcurve_id"]),
+            isoparametric=_optional_bool(value.get("isoparametric")),
+            parameter_range=_optional_float_pair(value.get("parameter_range")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pcurve_id": self.pcurve_id,
+            "isoparametric": self.isoparametric,
+            "parameter_range": (
+                None if self.parameter_range is None else list(self.parameter_range)
+            ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryVertexUse:
+    vertex_id: str
+    after_coedge_id: str | None
+    pcurves: tuple[GeometryPcurveUse, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryVertexUse:
+        return cls(
+            vertex_id=str(value["vertex_id"]),
+            after_coedge_id=_optional_str(value.get("after_coedge_id")),
+            pcurves=tuple(
+                GeometryPcurveUse.from_dict(item) for item in value.get("pcurves", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "vertex_id": self.vertex_id,
+            "after_coedge_id": self.after_coedge_id,
+        }
+        if self.pcurves:
+            result["pcurves"] = [item.to_dict() for item in self.pcurves]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryLoop:
+    id: str
+    face_id: str
+    boundary_role: str
+    coedge_ids: tuple[str, ...]
+    vertex_uses: tuple[GeometryVertexUse, ...]
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryLoop:
+        return cls(
+            id=str(value["id"]),
+            face_id=str(value["face_id"]),
+            boundary_role=str(value["boundary_role"]),
+            coedge_ids=tuple(str(item) for item in value.get("coedge_ids", [])),
+            vertex_uses=tuple(
+                GeometryVertexUse.from_dict(item)
+                for item in value.get("vertex_uses", [])
+            ),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "face_id": self.face_id,
+            "boundary_role": self.boundary_role,
+            "provenance": self.provenance.to_dict(),
+        }
+        if self.coedge_ids:
+            result["coedge_ids"] = list(self.coedge_ids)
+        if self.vertex_uses:
+            result["vertex_uses"] = [item.to_dict() for item in self.vertex_uses]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryCoedge:
+    id: str
+    loop_id: str
+    edge_id: str
+    next_id: str
+    previous_id: str
+    radial_next_id: str
+    sense: str
+    pcurves: tuple[GeometryPcurveUse, ...]
+    use_curve_id: str | None
+    use_curve_parameter_range: tuple[float, float] | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryCoedge:
+        return cls(
+            id=str(value["id"]),
+            loop_id=str(value["loop_id"]),
+            edge_id=str(value["edge_id"]),
+            next_id=str(value["next_id"]),
+            previous_id=str(value["previous_id"]),
+            radial_next_id=str(value["radial_next_id"]),
+            sense=str(value["sense"]),
+            pcurves=tuple(
+                GeometryPcurveUse.from_dict(item) for item in value.get("pcurves", [])
+            ),
+            use_curve_id=_optional_str(value.get("use_curve_id")),
+            use_curve_parameter_range=_optional_float_pair(
+                value.get("use_curve_parameter_range")
+            ),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "loop_id": self.loop_id,
+            "edge_id": self.edge_id,
+            "next_id": self.next_id,
+            "previous_id": self.previous_id,
+            "radial_next_id": self.radial_next_id,
+            "sense": self.sense,
+            "use_curve_id": self.use_curve_id,
+            "use_curve_parameter_range": (
+                None
+                if self.use_curve_parameter_range is None
+                else list(self.use_curve_parameter_range)
+            ),
+            "provenance": self.provenance.to_dict(),
+        }
+        if self.pcurves:
+            result["pcurves"] = [item.to_dict() for item in self.pcurves]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryEdge:
+    id: str
+    curve_id: str | None
+    start_vertex_id: str
+    end_vertex_id: str
+    parameter_range: tuple[float, float] | None
+    tolerance: float | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryEdge:
+        return cls(
+            id=str(value["id"]),
+            curve_id=_optional_str(value.get("curve_id")),
+            start_vertex_id=str(value["start_vertex_id"]),
+            end_vertex_id=str(value["end_vertex_id"]),
+            parameter_range=_optional_float_pair(value.get("parameter_range")),
+            tolerance=_optional_float(value.get("tolerance")),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "curve_id": self.curve_id,
+            "start_vertex_id": self.start_vertex_id,
+            "end_vertex_id": self.end_vertex_id,
+            "parameter_range": (
+                None if self.parameter_range is None else list(self.parameter_range)
+            ),
+            "tolerance": self.tolerance,
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryVertex:
+    id: str
+    point_id: str
+    tolerance: float | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryVertex:
+        return cls(
+            id=str(value["id"]),
+            point_id=str(value["point_id"]),
+            tolerance=_optional_float(value.get("tolerance")),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "point_id": self.point_id,
+            "tolerance": self.tolerance,
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryPoint:
+    id: str
+    position: tuple[float, float, float]
+    source_object: GeometrySourceObject | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryPoint:
+        return cls(
+            id=str(value["id"]),
+            position=_float_triple(value["position"]),
+            source_object=(
+                None
+                if value.get("source_object") is None
+                else GeometrySourceObject.from_dict(value["source_object"])
+            ),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "position": list(self.position),
+            "source_object": (
+                None if self.source_object is None else self.source_object.to_dict()
+            ),
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryPcurveState:
+    wrapper_reversed: bool | None
+    native_tail_flags: tuple[bool, bool, bool, bool] | None
+    parameter_range: tuple[float, float] | None
+    fit_tolerance: float | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryPcurveState:
+        return cls(
+            wrapper_reversed=_optional_bool(value.get("wrapper_reversed")),
+            native_tail_flags=_optional_bool_quad(value.get("native_tail_flags")),
+            parameter_range=_optional_float_pair(value.get("parameter_range")),
+            fit_tolerance=_optional_float(value.get("fit_tolerance")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "wrapper_reversed": self.wrapper_reversed,
+            "native_tail_flags": (
+                None if self.native_tail_flags is None else list(self.native_tail_flags)
+            ),
+            "parameter_range": (
+                None if self.parameter_range is None else list(self.parameter_range)
+            ),
+            "fit_tolerance": self.fit_tolerance,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryCarrier:
+    id: str
+    domain: GeometryCarrierDomain
+    kind: str
+    definition: Any
+    raw_record_id: str | None
+    source_object: GeometrySourceObject | None
+    pcurve_state: GeometryPcurveState | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryCarrier:
+        return cls(
+            id=str(value["id"]),
+            domain=GeometryCarrierDomain(value["domain"]),
+            kind=str(value["kind"]),
+            definition=value["definition"],
+            raw_record_id=_optional_str(value.get("raw_record_id")),
+            source_object=(
+                None
+                if value.get("source_object") is None
+                else GeometrySourceObject.from_dict(value["source_object"])
+            ),
+            pcurve_state=(
+                None
+                if value.get("pcurve_state") is None
+                else GeometryPcurveState.from_dict(value["pcurve_state"])
+            ),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "domain": self.domain.value,
+            "kind": self.kind,
+            "definition": self.definition,
+            "raw_record_id": self.raw_record_id,
+            "source_object": (
+                None if self.source_object is None else self.source_object.to_dict()
+            ),
+            "pcurve_state": (
+                None if self.pcurve_state is None else self.pcurve_state.to_dict()
+            ),
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryConstruction:
+    id: str
+    domain: GeometryConstructionDomain
+    produced_carrier_id: str
+    definition: Any
+    cache_fit_tolerance: float | None
+    record_bounds: tuple[float | None, float | None, float | None, float | None] | None
+    raw_record_id: str | None
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryConstruction:
+        return cls(
+            id=str(value["id"]),
+            domain=GeometryConstructionDomain(value["domain"]),
+            produced_carrier_id=str(value["produced_carrier_id"]),
+            definition=value["definition"],
+            cache_fit_tolerance=_optional_float(value.get("cache_fit_tolerance")),
+            record_bounds=_optional_optional_float_quad(value.get("record_bounds")),
+            raw_record_id=_optional_str(value.get("raw_record_id")),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "domain": self.domain.value,
+            "produced_carrier_id": self.produced_carrier_id,
+            "definition": self.definition,
+            "cache_fit_tolerance": self.cache_fit_tolerance,
+            "record_bounds": (
+                None if self.record_bounds is None else list(self.record_bounds)
+            ),
+            "raw_record_id": self.raw_record_id,
+            "provenance": self.provenance.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryTessellationChannel:
+    domain: str
+    item_size: int
+    kind: int
+    flags: int
+    count: int
+    byte_len: int
+    sha256: str
+    indices: tuple[int, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryTessellationChannel:
+        return cls(
+            domain=str(value["domain"]),
+            item_size=int(value["item_size"]),
+            kind=int(value["kind"]),
+            flags=int(value["flags"]),
+            count=int(value["count"]),
+            byte_len=int(value["byte_len"]),
+            sha256=str(value["sha256"]),
+            indices=tuple(int(item) for item in value.get("indices", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "domain": self.domain,
+            "item_size": self.item_size,
+            "kind": self.kind,
+            "flags": self.flags,
+            "count": self.count,
+            "byte_len": self.byte_len,
+            "sha256": self.sha256,
+        }
+        if self.indices:
+            result["indices"] = list(self.indices)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryTessellationTriangleGroup:
+    source_id: str | None
+    triangles: tuple[int, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryTessellationTriangleGroup:
+        return cls(
+            source_id=_optional_str(value.get("source_id")),
+            triangles=tuple(int(item) for item in value.get("triangles", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"source_id": self.source_id, "triangles": list(self.triangles)}
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryTessellationTextureAssignment:
+    source_id: str | None
+    texture_id: str
+    triangles: tuple[int, ...]
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any]
+    ) -> GeometryTessellationTextureAssignment:
+        return cls(
+            source_id=_optional_str(value.get("source_id")),
+            texture_id=str(value["texture_id"]),
+            triangles=tuple(int(item) for item in value.get("triangles", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_id": self.source_id,
+            "texture_id": self.texture_id,
+            "triangles": list(self.triangles),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryTessellation:
+    id: str
+    body_id: str | None
+    face_ids: tuple[str, ...]
+    chordal_deflection: float | None
+    source_object: GeometrySourceObject | None
+    vertices: tuple[tuple[float, float, float], ...]
+    triangles: tuple[tuple[int, int, int], ...]
+    feature_edges: tuple[tuple[int, int], ...]
+    strip_lengths: tuple[int, ...]
+    normals: tuple[tuple[float, float, float], ...]
+    corner_normals: tuple[tuple[float, float, float], ...]
+    triangle_groups: tuple[GeometryTessellationTriangleGroup, ...]
+    texture_assignments: tuple[GeometryTessellationTextureAssignment, ...]
+    channels: tuple[GeometryTessellationChannel, ...]
+    provenance: GeometryEntityProvenance
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryTessellation:
+        return cls(
+            id=str(value["id"]),
+            body_id=_optional_str(value.get("body_id")),
+            face_ids=tuple(str(item) for item in value.get("face_ids", [])),
+            chordal_deflection=_optional_float(value.get("chordal_deflection")),
+            source_object=(
+                None
+                if value.get("source_object") is None
+                else GeometrySourceObject.from_dict(value["source_object"])
+            ),
+            vertices=tuple(_float_triple(item) for item in value.get("vertices", [])),
+            triangles=tuple(_int_triple(item) for item in value.get("triangles", [])),
+            feature_edges=tuple(
+                _int_pair(item) for item in value.get("feature_edges", [])
+            ),
+            strip_lengths=tuple(int(item) for item in value.get("strip_lengths", [])),
+            normals=tuple(_float_triple(item) for item in value.get("normals", [])),
+            corner_normals=tuple(
+                _float_triple(item) for item in value.get("corner_normals", [])
+            ),
+            triangle_groups=tuple(
+                GeometryTessellationTriangleGroup.from_dict(item)
+                for item in value.get("triangle_groups", [])
+            ),
+            texture_assignments=tuple(
+                GeometryTessellationTextureAssignment.from_dict(item)
+                for item in value.get("texture_assignments", [])
+            ),
+            channels=tuple(
+                GeometryTessellationChannel.from_dict(item)
+                for item in value.get("channels", [])
+            ),
+            provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "body_id": self.body_id,
+            "chordal_deflection": self.chordal_deflection,
+            "source_object": (
+                None if self.source_object is None else self.source_object.to_dict()
+            ),
+            "vertices": [list(item) for item in self.vertices],
+            "triangles": [list(item) for item in self.triangles],
+            "provenance": self.provenance.to_dict(),
+        }
+        if self.face_ids:
+            result["face_ids"] = list(self.face_ids)
+        if self.feature_edges:
+            result["feature_edges"] = [list(item) for item in self.feature_edges]
+        if self.strip_lengths:
+            result["strip_lengths"] = list(self.strip_lengths)
+        if self.normals:
+            result["normals"] = [list(item) for item in self.normals]
+        if self.corner_normals:
+            result["corner_normals"] = [list(item) for item in self.corner_normals]
+        if self.triangle_groups:
+            result["triangle_groups"] = [
+                item.to_dict() for item in self.triangle_groups
+            ]
+        if self.texture_assignments:
+            result["texture_assignments"] = [
+                item.to_dict() for item in self.texture_assignments
+            ]
+        if self.channels:
+            result["channels"] = [item.to_dict() for item in self.channels]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryConfigurationState:
+    id: str
+    ordinal: int
+    active: bool | None
+    source_index: int | None
+    name: str | None
+    body_ids: tuple[str, ...] | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryConfigurationState:
+        bodies = value.get("body_ids")
+        return cls(
+            id=str(value["id"]),
+            ordinal=int(value["ordinal"]),
+            active=_optional_bool(value.get("active")),
+            source_index=_optional_int(value.get("source_index")),
+            name=_optional_str(value.get("name")),
+            body_ids=(None if bodies is None else tuple(str(item) for item in bodies)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "ordinal": self.ordinal,
+            "active": self.active,
+            "source_index": self.source_index,
+            "name": self.name,
+            "body_ids": None if self.body_ids is None else list(self.body_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryTopologyMetrics:
+    body_id: str
+    regions: int
+    shells: int
+    faces: int
+    loops: int
+    coedges: int
+    edges: int
+    vertices: int
+    euler_characteristic: int | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryTopologyMetrics:
+        return cls(
+            body_id=str(value["body_id"]),
+            regions=int(value["regions"]),
+            shells=int(value["shells"]),
+            faces=int(value["faces"]),
+            loops=int(value["loops"]),
+            coedges=int(value["coedges"]),
+            edges=int(value["edges"]),
+            vertices=int(value["vertices"]),
+            euler_characteristic=_optional_int(value.get("euler_characteristic")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryModel:
+    bodies: tuple[GeometryBody, ...]
+    regions: tuple[GeometryRegion, ...]
+    shells: tuple[GeometryShell, ...]
+    faces: tuple[GeometryFace, ...]
+    loops: tuple[GeometryLoop, ...]
+    coedges: tuple[GeometryCoedge, ...]
+    edges: tuple[GeometryEdge, ...]
+    vertices: tuple[GeometryVertex, ...]
+    points: tuple[GeometryPoint, ...]
+    carriers: tuple[GeometryCarrier, ...]
+    constructions: tuple[GeometryConstruction, ...]
+    tessellations: tuple[GeometryTessellation, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryModel:
+        return cls(
+            bodies=tuple(
+                GeometryBody.from_dict(item) for item in value.get("bodies", [])
+            ),
+            regions=tuple(
+                GeometryRegion.from_dict(item) for item in value.get("regions", [])
+            ),
+            shells=tuple(
+                GeometryShell.from_dict(item) for item in value.get("shells", [])
+            ),
+            faces=tuple(
+                GeometryFace.from_dict(item) for item in value.get("faces", [])
+            ),
+            loops=tuple(
+                GeometryLoop.from_dict(item) for item in value.get("loops", [])
+            ),
+            coedges=tuple(
+                GeometryCoedge.from_dict(item) for item in value.get("coedges", [])
+            ),
+            edges=tuple(
+                GeometryEdge.from_dict(item) for item in value.get("edges", [])
+            ),
+            vertices=tuple(
+                GeometryVertex.from_dict(item) for item in value.get("vertices", [])
+            ),
+            points=tuple(
+                GeometryPoint.from_dict(item) for item in value.get("points", [])
+            ),
+            carriers=tuple(
+                GeometryCarrier.from_dict(item) for item in value.get("carriers", [])
+            ),
+            constructions=tuple(
+                GeometryConstruction.from_dict(item)
+                for item in value.get("constructions", [])
+            ),
+            tessellations=tuple(
+                GeometryTessellation.from_dict(item)
+                for item in value.get("tessellations", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bodies": [item.to_dict() for item in self.bodies],
+            "regions": [item.to_dict() for item in self.regions],
+            "shells": [item.to_dict() for item in self.shells],
+            "faces": [item.to_dict() for item in self.faces],
+            "loops": [item.to_dict() for item in self.loops],
+            "coedges": [item.to_dict() for item in self.coedges],
+            "edges": [item.to_dict() for item in self.edges],
+            "vertices": [item.to_dict() for item in self.vertices],
+            "points": [item.to_dict() for item in self.points],
+            "carriers": [item.to_dict() for item in self.carriers],
+            "constructions": [item.to_dict() for item in self.constructions],
+            "tessellations": [item.to_dict() for item in self.tessellations],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryRawRecord:
+    id: str
+    stream: str
+    offset: int
+    byte_len: int
+    sha256: str
+    data_retained: bool
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryRawRecord:
+        return cls(
+            id=str(value["id"]),
+            stream=str(value["stream"]),
+            offset=int(value["offset"]),
+            byte_len=int(value["byte_len"]),
+            sha256=str(value["sha256"]),
+            data_retained=bool(value["data_retained"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryLoss:
+    code: str
+    taxonomy: str
+    category: str
+    severity: str
+    message: str
+    stream: str | None
+    offset: int | None
+    tag: str | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryLoss:
+        return cls(
+            code=str(value["code"]),
+            taxonomy=str(value["taxonomy"]),
+            category=str(value["category"]),
+            severity=str(value["severity"]),
+            message=str(value["message"]),
+            stream=_optional_str(value.get("stream")),
+            offset=_optional_int(value.get("offset")),
+            tag=_optional_str(value.get("tag")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryFinding:
+    check: str
+    severity: str
+    message: str
+    entity_id: str | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryFinding:
+        return cls(
+            check=str(value["check"]),
+            severity=str(value["severity"]),
+            message=str(value["message"]),
+            entity_id=_optional_str(value.get("entity_id")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryByteDomain:
+    id: str
+    container_entry_id: str
+    stream_path: str
+    role: GeometryStreamRole
+    storage: GeometryByteStorage
+    outer_payload_offset: int
+    description: str
+    schema: str
+    stream_byte_len: int
+    stream_sha256: str
+    body_offset: int
+    byte_len: int
+    sha256: str
+    offset_basis: GeometryByteOffsetBasis
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryByteDomain:
+        return cls(
+            id=str(value["id"]),
+            container_entry_id=str(value["container_entry_id"]),
+            stream_path=str(value["stream_path"]),
+            role=GeometryStreamRole(value["role"]),
+            storage=GeometryByteStorage(value["storage"]),
+            outer_payload_offset=int(value["outer_payload_offset"]),
+            description=str(value["description"]),
+            schema=str(value["schema"]),
+            stream_byte_len=int(value["stream_byte_len"]),
+            stream_sha256=str(value["stream_sha256"]),
+            body_offset=int(value["body_offset"]),
+            byte_len=int(value["byte_len"]),
+            sha256=str(value["sha256"]),
+            offset_basis=GeometryByteOffsetBasis(value["offset_basis"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "container_entry_id": self.container_entry_id,
+            "stream_path": self.stream_path,
+            "role": self.role.value,
+            "storage": self.storage.value,
+            "outer_payload_offset": self.outer_payload_offset,
+            "description": self.description,
+            "schema": self.schema,
+            "stream_byte_len": self.stream_byte_len,
+            "stream_sha256": self.stream_sha256,
+            "body_offset": self.body_offset,
+            "byte_len": self.byte_len,
+            "sha256": self.sha256,
+            "offset_basis": self.offset_basis.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryByteCoverage:
+    source_bytes: int
+    candidate_stream_bytes: int
+    active_stream_bytes: int
+    partition_domain_bytes: int
+    retained_record_bytes: int
+    located_entity_count: int
+    unique_location_count: int
+    classified_active_bytes: int
+    unclassified_active_bytes: int
+    partition_status: GeometryBytePartitionStatus
+    typed_bytes: int | None
+    uninterpreted_bytes: int | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryByteCoverage:
+        return cls(
+            source_bytes=int(value["source_bytes"]),
+            candidate_stream_bytes=int(value["candidate_stream_bytes"]),
+            active_stream_bytes=int(value["active_stream_bytes"]),
+            partition_domain_bytes=int(
+                value.get("partition_domain_bytes", value["active_stream_bytes"])
+            ),
+            retained_record_bytes=int(value["retained_record_bytes"]),
+            located_entity_count=int(value["located_entity_count"]),
+            unique_location_count=int(value["unique_location_count"]),
+            classified_active_bytes=int(value["classified_active_bytes"]),
+            unclassified_active_bytes=int(value["unclassified_active_bytes"]),
+            partition_status=GeometryBytePartitionStatus(value["partition_status"]),
+            typed_bytes=_optional_int(value.get("typed_bytes")),
+            uninterpreted_bytes=_optional_int(value.get("uninterpreted_bytes")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_bytes": self.source_bytes,
+            "candidate_stream_bytes": self.candidate_stream_bytes,
+            "active_stream_bytes": self.active_stream_bytes,
+            "partition_domain_bytes": self.partition_domain_bytes,
+            "retained_record_bytes": self.retained_record_bytes,
+            "located_entity_count": self.located_entity_count,
+            "unique_location_count": self.unique_location_count,
+            "classified_active_bytes": self.classified_active_bytes,
+            "unclassified_active_bytes": self.unclassified_active_bytes,
+            "partition_status": self.partition_status.value,
+            "typed_bytes": self.typed_bytes,
+            "uninterpreted_bytes": self.uninterpreted_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryFidelityReport:
+    decoder: str
+    decoder_version: str
+    geometry_transferred: bool
+    entity_counts: Mapping[str, int]
+    byte_domains: tuple[GeometryByteDomain, ...]
+    byte_coverage: GeometryByteCoverage
+    losses: tuple[GeometryLoss, ...]
+    validation_findings: tuple[GeometryFinding, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryFidelityReport:
+        return cls(
+            decoder=str(value["decoder"]),
+            decoder_version=str(value["decoder_version"]),
+            geometry_transferred=bool(value["geometry_transferred"]),
+            entity_counts={
+                str(name): int(item)
+                for name, item in value.get("entity_counts", {}).items()
+            },
+            byte_domains=tuple(
+                GeometryByteDomain.from_dict(item)
+                for item in value.get("byte_domains", [])
+            ),
+            byte_coverage=GeometryByteCoverage.from_dict(value["byte_coverage"]),
+            losses=tuple(
+                GeometryLoss.from_dict(item) for item in value.get("losses", [])
+            ),
+            validation_findings=tuple(
+                GeometryFinding.from_dict(item)
+                for item in value.get("validation_findings", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = {
+            "decoder": self.decoder,
+            "decoder_version": self.decoder_version,
+            "geometry_transferred": self.geometry_transferred,
+            "entity_counts": dict(self.entity_counts),
+            "byte_coverage": self.byte_coverage.to_dict(),
+            "losses": [item.to_dict() for item in self.losses],
+            "validation_findings": [
+                item.to_dict() for item in self.validation_findings
+            ],
+        }
+        if self.byte_domains:
+            result["byte_domains"] = [item.to_dict() for item in self.byte_domains]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryDocument:
+    source: SourceInfo
+    length_unit: str
+    source_streams: tuple[GeometryStreamCandidate, ...]
+    model: GeometryModel
+    configurations: tuple[GeometryConfigurationState, ...]
+    topology_metrics: tuple[GeometryTopologyMetrics, ...]
+    raw_records: tuple[GeometryRawRecord, ...]
+    fidelity: GeometryFidelityReport
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryDocument:
+        return cls(
+            source=SourceInfo.from_dict(value["source"]),
+            length_unit=str(value["length_unit"]),
+            source_streams=tuple(
+                GeometryStreamCandidate.from_dict(item)
+                for item in value.get("source_streams", [])
+            ),
+            model=GeometryModel.from_dict(value["model"]),
+            configurations=tuple(
+                GeometryConfigurationState.from_dict(item)
+                for item in value.get("configurations", [])
+            ),
+            topology_metrics=tuple(
+                GeometryTopologyMetrics.from_dict(item)
+                for item in value.get("topology_metrics", [])
+            ),
+            raw_records=tuple(
+                GeometryRawRecord.from_dict(item)
+                for item in value.get("raw_records", [])
+            ),
+            fidelity=GeometryFidelityReport.from_dict(value["fidelity"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source.to_dict(),
+            "length_unit": self.length_unit,
+            "source_streams": [item.to_dict() for item in self.source_streams],
+            "model": self.model.to_dict(),
+            "configurations": [item.to_dict() for item in self.configurations],
+            "topology_metrics": [item.to_dict() for item in self.topology_metrics],
+            "raw_records": [item.to_dict() for item in self.raw_records],
+            "fidelity": self.fidelity.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryResult:
+    status: GeometryStatus
+    geometry: GeometryDocument | None
+    diagnostics: tuple[Diagnostic, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryResult:
+        geometry = value.get("geometry")
+        return cls(
+            status=GeometryStatus(value["status"]),
+            geometry=(
+                None if geometry is None else GeometryDocument.from_dict(geometry)
+            ),
+            diagnostics=tuple(
+                Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "geometry": None if self.geometry is None else self.geometry.to_dict(),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SourceDocument:
     source: SourceInfo
     envelope: SourcedValue[Envelope]
@@ -978,9 +2219,7 @@ class SourceDocument:
                 DocumentReference.from_dict(item)
                 for item in value.get("references", [])
             ),
-            preview=(
-                None if preview is None else BinaryResource.from_dict(preview)
-            ),
+            preview=(None if preview is None else BinaryResource.from_dict(preview)),
             sheets=tuple(
                 DrawingSheet.from_dict(item) for item in value.get("sheets", [])
             ),
@@ -1048,9 +2287,7 @@ class ParseResult:
             status=ParseStatus(value["status"]),
             document=None if document is None else SourceDocument.from_dict(document),
             inventory=(
-                None
-                if inventory is None
-                else ContainerInventory.from_dict(inventory)
+                None if inventory is None else ContainerInventory.from_dict(inventory)
             ),
             diagnostics=tuple(
                 Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
@@ -1067,9 +2304,7 @@ class ParseResult:
         return {
             "status": self.status.value,
             "document": None if self.document is None else self.document.to_dict(),
-            "inventory": (
-                None if self.inventory is None else self.inventory.to_dict()
-            ),
+            "inventory": (None if self.inventory is None else self.inventory.to_dict()),
             "diagnostics": [item.to_dict() for item in self.diagnostics],
             "coverage": self.coverage.to_dict(),
             "semantic_coverage": (
@@ -1117,9 +2352,7 @@ class ProjectNode:
             path=str(value["path"]),
             is_root=bool(value["is_root"]),
             minimum_depth=int(value["minimum_depth"]),
-            parse_status=(
-                None if parse_status is None else ParseStatus(parse_status)
-            ),
+            parse_status=(None if parse_status is None else ParseStatus(parse_status)),
             document_kind=(
                 None if document_kind is None else DocumentKind(document_kind)
             ),
@@ -1157,9 +2390,7 @@ class ProjectNode:
             "available_configurations": [
                 item.to_dict() for item in self.available_configurations
             ],
-            "selected_configuration_indices": list(
-                self.selected_configuration_indices
-            ),
+            "selected_configuration_indices": list(self.selected_configuration_indices),
             "requested_configurations": list(self.requested_configurations),
             "diagnostic_codes": list(self.diagnostic_codes),
         }
@@ -1374,6 +2605,69 @@ def _optional_int(value: Any) -> int | None:
 
 def _optional_bool(value: Any) -> bool | None:
     return None if value is None else bool(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def _optional_float_pair(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    items = tuple(float(item) for item in value)
+    if len(items) != 2:
+        raise ValueError("expected exactly two floating-point values")
+    return items[0], items[1]
+
+
+def _optional_float_quad(value: Any) -> tuple[float, float, float, float] | None:
+    if value is None:
+        return None
+    items = tuple(float(item) for item in value)
+    if len(items) != 4:
+        raise ValueError("expected exactly four floating-point values")
+    return items[0], items[1], items[2], items[3]
+
+
+def _optional_optional_float_quad(
+    value: Any,
+) -> tuple[float | None, float | None, float | None, float | None] | None:
+    if value is None:
+        return None
+    items = tuple(_optional_float(item) for item in value)
+    if len(items) != 4:
+        raise ValueError("expected exactly four optional floating-point values")
+    return items[0], items[1], items[2], items[3]
+
+
+def _optional_bool_quad(value: Any) -> tuple[bool, bool, bool, bool] | None:
+    if value is None:
+        return None
+    items = tuple(bool(item) for item in value)
+    if len(items) != 4:
+        raise ValueError("expected exactly four boolean values")
+    return items[0], items[1], items[2], items[3]
+
+
+def _float_triple(value: Any) -> tuple[float, float, float]:
+    items = tuple(float(item) for item in value)
+    if len(items) != 3:
+        raise ValueError("expected exactly three floating-point values")
+    return items[0], items[1], items[2]
+
+
+def _int_pair(value: Any) -> tuple[int, int]:
+    items = tuple(int(item) for item in value)
+    if len(items) != 2:
+        raise ValueError("expected exactly two integer values")
+    return items[0], items[1]
+
+
+def _int_triple(value: Any) -> tuple[int, int, int]:
+    items = tuple(int(item) for item in value)
+    if len(items) != 3:
+        raise ValueError("expected exactly three integer values")
+    return items[0], items[1], items[2]
 
 
 def _int_mapping(value: Mapping[str, Any]) -> dict[str, int]:

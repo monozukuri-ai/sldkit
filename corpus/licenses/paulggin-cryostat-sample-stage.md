@@ -2,7 +2,8 @@
 
 ## Decision
 
-The six CAD artifacts listed below at revision
+The six native CAD artifacts and three corresponding neutral exports listed
+below at revision
 `77751f2461a130f7f5d9ed4111da787ecb9cc4f2` are approved for parser testing and
 redistribution under MIT, provided that the upstream copyright and license
 notice accompanies any redistributed copy. `sldkit` does not vendor the files;
@@ -29,6 +30,14 @@ Selected paths:
 - `cad/ChipStage.SLDASM`
 - `cad/sample_stage.SLDDRW`
 - `cad/cable_bracket.SLDDRW`
+- `step/sample_stage.STEP`
+- `step/cpw_chip.STEP`
+- `step/cable_bracket.STEP`
+
+The pinned `INVENTORY.md` labels the three STEP files as neutral exports, and
+the README lists them alongside the native deliverables. The native and neutral
+files were added in the same pinned commit. This supports artifact pairing; it
+does not prove that a neutral export preserves native face or edge partitioning.
 
 This is a repository-evidence audit, not legal advice or an independent
 copyright-registration check.

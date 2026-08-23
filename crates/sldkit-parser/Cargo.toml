@@ -2,20 +2,28 @@
 name = "sldkit-parser"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+cadmpeg-codec-sldprt.workspace = true
+cadmpeg-core.workspace = true
+cadmpeg-ir.workspace = true
 crc32fast.workspace = true
+flate2.workspace = true
 roxmltree.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 sldkit-container = { path = "../sldkit-container" }
 sldkit-core = { path = "../sldkit-core" }
 
 [dev-dependencies]
-flate2.workspace = true
+cadmpeg-ir = { workspace = true, features = ["examples"] }
+cfb.workspace = true
 tempfile.workspace = true
 
 [lints]

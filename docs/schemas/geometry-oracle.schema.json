@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/monozukuri-ai/sldkit/docs/schemas/geometry-oracle.schema.json",
+  "title": "sldkit independent geometry oracle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "oracle_id",
+    "source",
+    "capture",
+    "pairs"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "oracle_id": {"$ref": "#/$defs/id"},
+    "source": {"$ref": "#/$defs/source"},
+    "capture": {"$ref": "#/$defs/capture"},
+    "pairs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/pair"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$"
+    },
+    "vector3": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "items": false
+    },
+    "bounds": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "items": false
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "repository", "revision", "license"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/id"},
+        "repository": {"type": "string", "format": "uri"},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "license": {"type": "string", "minLength": 1}
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captured_at_utc",
+        "tool",
+        "tool_version",
+        "length_unit"
+      ],
+      "properties": {
+        "captured_at_utc": {"type": "string", "format": "date-time"},
+        "tool": {"type": "string", "minLength": 1},
+        "tool_version": {"type": "string", "minLength": 1},
+        "length_unit": {"const": "millimeter"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "neutral_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "format"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "format": {"const": "step"}
+      }
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bodies_by_kind",
+        "shells",
+        "faces",
+        "edges",
+        "vertices",
+        "valid"
+      ],
+      "properties": {
+        "bodies_by_kind": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "shells": {"type": "integer", "minimum": 0},
+        "faces": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0},
+        "vertices": {"type": "integer", "minimum": 0},
+        "valid": {"type": "boolean"}
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "volume_mm3",
+        "surface_area_mm2",
+        "center_of_mass_mm",
+        "bounds_mm"
+      ],
+      "properties": {
+        "volume_mm3": {"type": "number", "minimum": 0},
+        "surface_area_mm2": {"type": "number", "minimum": 0},
+        "center_of_mass_mm": {
+          "oneOf": [
+            {"$ref": "#/$defs/vector3"},
+            {"type": "null"}
+          ]
+        },
+        "bounds_mm": {"$ref": "#/$defs/bounds"}
+      }
+    },
+    "scalar_tolerance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["absolute", "relative"],
+      "properties": {
+        "absolute": {"type": "number", "minimum": 0},
+        "relative": {"type": "number", "minimum": 0}
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "volume_mm3",
+        "surface_area_mm2",
+        "center_of_mass_absolute_mm",
+        "bounds_absolute_mm"
+      ],
+      "properties": {
+        "volume_mm3": {"$ref": "#/$defs/scalar_tolerance"},
+        "surface_area_mm2": {"$ref": "#/$defs/scalar_tolerance"},
+        "center_of_mass_absolute_mm": {"type": "number", "minimum": 0},
+        "bounds_absolute_mm": {"type": "number", "minimum": 0}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology", "geometry", "tolerances"],
+      "properties": {
+        "topology": {"enum": ["required", "informational"]},
+        "geometry": {"const": "required"},
+        "tolerances": {"$ref": "#/$defs/tolerances"}
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "native",
+        "neutral",
+        "reference",
+        "comparison"
+      ],
+      "properties": {
+        "pair_id": {"$ref": "#/$defs/id"},
+        "native": {"$ref": "#/$defs/artifact"},
+        "neutral": {"$ref": "#/$defs/neutral_artifact"},
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["topology", "geometry"],
+          "properties": {
+            "topology": {"$ref": "#/$defs/topology"},
+            "geometry": {"$ref": "#/$defs/geometry"}
+          }
+        },
+        "comparison": {"$ref": "#/$defs/comparison"}
+      }
+    }
+  }
+}

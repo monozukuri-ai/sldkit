@@ -40,6 +40,6 @@ def test_public_documentation_is_included_only_in_the_source_distribution():
     assert {"path": "docs/**/*", "format": "sdist"} in includes
 
 
-def test_license_files_only_include_the_project_license():
+def test_license_files_include_project_and_compiled_dependency_licenses():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["license-files"] == ["LICENSE"]
+    assert project["project"]["license-files"] == ["LICENSE", "LICENSES/*"]

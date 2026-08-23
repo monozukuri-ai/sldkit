@@ -219,6 +219,12 @@ fn scan_impl<'a>(
         attributes.insert("cfb_fragmented".to_owned(), "true".to_owned());
         attributes.insert("clsid".to_owned(), fact.clsid);
         attributes.insert("state_bits".to_owned(), fact.state_bits.to_string());
+        if fact.is_stream {
+            attributes.insert(
+                "legacy_stream_family".to_owned(),
+                legacy_stream_family(&fact.path).to_owned(),
+            );
+        }
         if fact.is_root {
             attributes.insert("root".to_owned(), "true".to_owned());
         }
@@ -427,6 +433,33 @@ fn scan_impl<'a>(
         status,
         &accounted,
     )
+}
+
+fn legacy_stream_family(path: &str) -> &'static str {
+    let leaf = path.rsplit('/').next().unwrap_or_default();
+    if matches!(
+        leaf,
+        "\u{5}SummaryInformation" | "\u{5}DocumentSummaryInformation" | "ISolidWorksInformation"
+    ) || leaf.ends_with("-Properties")
+    {
+        "property_set"
+    } else if matches!(leaf, "Preview" | "PreviewPNG") || leaf.contains("-Preview") {
+        "preview"
+    } else if matches!(leaf, "CMgr" | "CMgrHdr2" | "CnfgObjs") || leaf.starts_with("Config-") {
+        "configuration"
+    } else if matches!(leaf, "Header" | "Header2" | "ModelStamps") {
+        "document_header"
+    } else if path.contains("/_MO_VERSION_") || path.contains("/_DL_VERSION_") {
+        "versioned_model"
+    } else if path.starts_with("/swXmlContents/") {
+        "xml_cache"
+    } else if path.starts_with("/ThirdPty/") || path.starts_with("/ThirdPtyStore/") {
+        "third_party"
+    } else if leaf.starts_with("DisplayList") {
+        "display_cache"
+    } else {
+        "other"
+    }
 }
 
 fn wants(
@@ -762,6 +795,19 @@ mod tests {
         Ok(compound.into_inner().into_inner())
     }
 
+    fn legacy_family_fixture() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let cursor = Cursor::new(Vec::new());
+        let mut compound = cfb::CompoundFile::create_with_version(Version::V3, cursor)?;
+        compound.create_storage("/Contents")?;
+        for path in ["/\u{5}SummaryInformation", "/Preview", "/Contents/CMgrHdr2"] {
+            let mut stream = compound.create_stream(path)?;
+            stream.write_all(b"payload")?;
+        }
+        compound.set_state_bits("/Preview", 0x1234_5678)?;
+        compound.flush()?;
+        Ok(compound.into_inner().into_inner())
+    }
+
     #[test]
     fn walks_v3_and_v4_compound_files_deterministically() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -782,6 +828,50 @@ mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn classifies_legacy_stream_families_and_preserves_directory_state_bits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let data = legacy_family_fixture()?;
+        let scanned = scan(&data, &ResourceLimits::service(), None);
+        assert_eq!(scanned.result.status, InventoryStatus::Complete);
+        let inventory = scanned
+            .result
+            .inventory
+            .as_ref()
+            .ok_or("inventory missing")?;
+
+        for (path, family) in [
+            ("/\u{5}SummaryInformation", "property_set"),
+            ("/Preview", "preview"),
+            ("/Contents/CMgrHdr2", "configuration"),
+        ] {
+            let entry = inventory
+                .entries
+                .iter()
+                .find(|entry| entry.path.as_deref() == Some(path))
+                .ok_or("stream entry missing")?;
+            assert_eq!(
+                entry
+                    .attributes
+                    .get("legacy_stream_family")
+                    .map(String::as_str),
+                Some(family)
+            );
+        }
+
+        let preview = inventory
+            .entries
+            .iter()
+            .find(|entry| entry.path.as_deref() == Some("/Preview"))
+            .ok_or("preview entry missing")?;
+        assert_eq!(
+            preview.attributes.get("state_bits").map(String::as_str),
+            Some("305419896")
+        );
+        assert!(scanned.result.diagnostics.is_empty());
         Ok(())
     }
 

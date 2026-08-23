@@ -1,6 +1,7 @@
 //! Public contracts shared by the `SolidWorks` parser layers.
 
 mod diagnostic;
+mod geometry;
 mod inventory;
 mod limits;
 mod model;
@@ -8,6 +9,18 @@ mod project;
 mod result;
 
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSeverity};
+pub use geometry::{
+    GeometryBody, GeometryByteCoverage, GeometryByteDomain, GeometryByteOffsetBasis,
+    GeometryBytePartitionStatus, GeometryByteStorage, GeometryCarrier, GeometryCarrierDomain,
+    GeometryCoedge, GeometryConfigurationState, GeometryConstruction, GeometryConstructionDomain,
+    GeometryDocument, GeometryEdge, GeometryEntityProvenance, GeometryExactness, GeometryFace,
+    GeometryFidelityReport, GeometryFinding, GeometryLoop, GeometryLoss, GeometryModel,
+    GeometryPcurveState, GeometryPcurveUse, GeometryPoint, GeometryRawRecord, GeometryRegion,
+    GeometryResult, GeometryShell, GeometrySourceObject, GeometryStatus, GeometryStreamCandidate,
+    GeometryStreamRole, GeometryStreamSelection, GeometryTessellation, GeometryTessellationChannel,
+    GeometryTessellationTextureAssignment, GeometryTessellationTriangleGroup,
+    GeometryTopologyMetrics, GeometryVertex, GeometryVertexUse,
+};
 pub use inventory::{
     ByteRange, ChecksumStatus, CompressionMethod, ContainerInventory, ExtractionMode,
     ExtractionResult, ExtractionStatus, InventoryEntry, InventoryEntryKind, InventoryEntryState,

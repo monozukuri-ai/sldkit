@@ -55,6 +55,10 @@ def _check_wheel(path: Path) -> None:
         assert any(name.endswith("/METADATA") for name in names), path
         assert any(name.endswith("sldkit/py.typed") for name in names), path
         assert any(name.endswith("sldkit/_core.pyi") for name in names), path
+        assert any(name.endswith("licenses/LICENSE") for name in names), path
+        assert any(
+            name.endswith("licenses/LICENSES/Apache-2.0.txt") for name in names
+        ), path
         assert any(
             "sldkit/_core" in name and name.endswith((".so", ".pyd", ".dylib"))
             for name in names
@@ -81,8 +85,13 @@ def _check_sdist(path: Path) -> None:
     assert "docs/README.md" in normalized, path
     assert "docs/architecture.md" in normalized, path
     assert "docs/compatibility.md" in normalized, path
+    assert "docs/geometry.md" in normalized, path
+    assert "docs/schemas/geometry-oracle.schema.json" in normalized, path
     assert "docs/project-scanning.md" in normalized, path
     assert "docs/parser-provenance.md" in normalized, path
+    assert "LICENSE" in normalized, path
+    assert "LICENSES/Apache-2.0.txt" in normalized, path
+    assert "LICENSES/README.md" in normalized, path
 
 
 def main() -> None:

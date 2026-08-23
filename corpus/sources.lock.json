@@ -43,7 +43,7 @@
       "revision": "77751f2461a130f7f5d9ed4111da787ecb9cc4f2",
       "retrieved_at": "2026-08-22T14:59:52+09:00",
       "license": "MIT",
-      "license_note": "README names Paulino Gin as author, identifies the selected native CAD files as the project's SolidWorks 2024 deliverables, and the root MIT license has no per-file exclusion. Redistribution is permitted with the MIT notice. The binaries remain unvendored by project policy; saved reference names do not form a literal Pack and Go closure.",
+      "license_note": "README names Paulino Gin as author, identifies the selected native CAD files as the project's SolidWorks 2024 deliverables, and lists the selected STEP files as neutral exports. The root MIT license has no per-file exclusion. Redistribution is permitted with the MIT notice. The binaries remain unvendored by project policy; saved reference names do not form a literal Pack and Go closure.",
       "redistribution": "allowed"
     },
     {

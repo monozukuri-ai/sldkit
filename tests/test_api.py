@@ -61,8 +61,7 @@ def assembly_file(*components: tuple[str, str, str, bool]) -> bytes:
         for index, (_path, _kind, name, suppressed) in enumerate(components, 1)
     )
     models = "".join(
-        f'<swModel id="m{index}" swFileRef="{index}" '
-        'swConfigurationName="Default"/>'
+        f'<swModel id="m{index}" swFileRef="{index}" swConfigurationName="Default"/>'
         for index, _component in enumerate(components, 1)
     )
     xml = (
@@ -152,6 +151,61 @@ def test_strict_mode_retains_result_on_exception():
         sldkit.parse_bytes(modern_file(), strict=True)
 
     assert caught.value.result.status is sldkit.ParseStatus.PARTIAL
+
+
+def test_geometry_api_is_explicit_typed_and_matches_native_json():
+    payload = part_file()
+
+    result = sldkit.decode_geometry_bytes(payload, filename="fixture.SLDPRT")
+    native = json.loads(
+        _core.decode_geometry_bytes_json(payload, "fixture.SLDPRT", "desktop")
+    )
+
+    assert result.status is sldkit.GeometryStatus.PARTIAL
+    assert result.geometry is not None
+    assert result.geometry.source.input_kind is sldkit.SourceInputKind.BYTES
+    assert result.geometry.source.sha256 == hashlib.sha256(payload).hexdigest()
+    assert result.geometry.fidelity.geometry_transferred is False
+    assert result.geometry.model.bodies == ()
+    assert result.geometry.model.constructions == ()
+    assert (
+        result.geometry.fidelity.byte_coverage.partition_status
+        is sldkit.GeometryBytePartitionStatus.INCOMPLETE
+    )
+    assert result.geometry.fidelity.byte_coverage.classified_active_bytes == 0
+    assert result.geometry.fidelity.byte_coverage.partition_domain_bytes == 0
+    assert result.geometry.fidelity.byte_coverage.typed_bytes is None
+    assert result.geometry.fidelity.byte_coverage.uninterpreted_bytes is None
+    assert sldkit.GeometryConstructionDomain.SURFACE.value == "surface"
+    assert sldkit.GeometryByteStorage.WRAPPED_ZLIB.value == "wrapped_zlib"
+    assert sldkit.GeometryByteOffsetBasis.PARASOLID_BODY.value == "parasolid_body"
+    assert sldkit.GeometryPcurveState.__name__ == "GeometryPcurveState"
+    assert (
+        sldkit.GeometryTessellationTriangleGroup.__name__
+        == "GeometryTessellationTriangleGroup"
+    )
+    assert result.to_dict() == native
+    assert {item.code for item in result.diagnostics} == {
+        "geometry.not_transferred",
+        "geometry.byte_partition_incomplete",
+    }
+
+
+def test_geometry_strict_mode_retains_partial_result():
+    with pytest.raises(sldkit.GeometryError) as caught:
+        sldkit.decode_geometry_bytes(
+            part_file(), filename="fixture.SLDPRT", strict=True
+        )
+
+    assert caught.value.result.status is sldkit.GeometryStatus.PARTIAL
+
+
+def test_geometry_rejects_non_part_document_kind():
+    result = sldkit.decode_geometry_bytes(assembly_file(), filename="fixture.SLDASM")
+
+    assert result.status is sldkit.GeometryStatus.UNSUPPORTED
+    assert result.geometry is None
+    assert result.diagnostics[-1].code == "geometry.document_kind_unsupported"
 
 
 def test_modern_properties_keep_present_empty_missing_and_unsupported_distinct():
@@ -251,9 +305,7 @@ def test_inspect_is_deterministic_and_extracts_both_representations():
     assert first.coverage.uninterpreted_bytes == 0
 
     decoded = sldkit.extract_bytes(payload, entry.id)
-    stored = sldkit.extract_bytes(
-        payload, entry.id, mode=sldkit.ExtractionMode.STORED
-    )
+    stored = sldkit.extract_bytes(payload, entry.id, mode=sldkit.ExtractionMode.STORED)
     assert decoded.result.status is sldkit.ExtractionStatus.EXTRACTED
     assert decoded.data == b"decoded-payload"
     assert stored.data is not None
@@ -268,9 +320,7 @@ def test_zip_inventory_detects_content_without_decoding_opc_semantics():
     assert result.inventory is not None
     assert result.inventory.envelope is sldkit.Envelope.ZIP_OPC
     assert result.inventory.entries[0].path == "docProps/test.xml"
-    assert any(
-        item.code == "input.extension_mismatch" for item in result.diagnostics
-    )
+    assert any(item.code == "input.extension_mismatch" for item in result.diagnostics)
 
 
 def test_full_inventory_rejects_corruption_and_declared_bomb():
@@ -287,9 +337,7 @@ def test_full_inventory_rejects_corruption_and_declared_bomb():
     bomb[26:30] = (1_000_000).to_bytes(4, "little")
     rejected = sldkit.inspect_bytes(bomb, profile=sldkit.LimitProfile.SERVICE)
     assert rejected.status is sldkit.InventoryStatus.REJECTED
-    assert any(
-        item.code == "limit.compression_ratio" for item in rejected.diagnostics
-    )
+    assert any(item.code == "limit.compression_ratio" for item in rejected.diagnostics)
 
 
 def test_signature_only_ole2_is_probe_candidate_but_malformed_container():
@@ -310,9 +358,7 @@ def test_project_scan_resolves_graph_and_matches_native_json(tmp_path):
     private.mkdir()
     root = tmp_path / "root.SLDASM"
     child = private / "child.SLDPRT"
-    root.write_bytes(
-        assembly_file(("private/child.SLDPRT", "PART", "child-1", False))
-    )
+    root.write_bytes(assembly_file(("private/child.SLDPRT", "PART", "child-1", False)))
     child.write_bytes(part_file())
 
     result = sldkit.scan_project(

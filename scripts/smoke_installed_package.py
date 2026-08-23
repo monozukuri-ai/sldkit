@@ -37,6 +37,7 @@ def modern_stream(name: str, payload: bytes) -> bytes:
         )
     )
 
+
 assert metadata.version("sldkit") == sldkit.__version__
 
 probe = sldkit.probe_bytes(OLE2_SIGNATURE)
@@ -77,12 +78,22 @@ parsed = sldkit.parse_bytes(modern, filename="fixture.SLDPRT")
 assert parsed.status is sldkit.ParseStatus.PARTIAL
 assert parsed.document is not None
 assert parsed.document.document_kind.value is sldkit.DocumentKind.PART
-assert {
-    item.name.value: item.value_state for item in parsed.document.properties
-} == {
+assert {item.name.value: item.value_state for item in parsed.document.properties} == {
     "present": sldkit.PropertyValueState.PRESENT,
     "empty": sldkit.PropertyValueState.EMPTY,
 }
+
+geometry = sldkit.decode_geometry_bytes(modern, filename="fixture.SLDPRT")
+assert geometry.status is sldkit.GeometryStatus.PARTIAL
+assert geometry.geometry is not None
+assert geometry.geometry.fidelity.geometry_transferred is False
+assert geometry.geometry.model.bodies == ()
+try:
+    sldkit.decode_geometry_bytes(modern, filename="fixture.SLDPRT", strict=True)
+except sldkit.GeometryError as error:
+    assert error.result.status is sldkit.GeometryStatus.PARTIAL
+else:
+    raise AssertionError("strict geometry decoding accepted a partial result")
 
 assembly_xml = (
     b'<root><swHeader><swFile id="0" swDocType="ASSEMBLY"/>'

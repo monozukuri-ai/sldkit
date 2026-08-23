@@ -7,10 +7,12 @@ from os import PathLike
 from typing import Any
 
 from . import _core
-from .errors import ParseError
+from .errors import GeometryError, ParseError
 from .model import (
     ExtractionMode,
     ExtractionResult,
+    GeometryResult,
+    GeometryStatus,
     InventoryResult,
     LimitProfile,
     ParseResult,
@@ -22,9 +24,7 @@ from .model import (
 
 BytesLike = bytes | bytearray | memoryview
 PathType = str | PathLike[str]
-WindowsPrefixMappings = (
-    Mapping[str, PathType] | Iterable[tuple[str, PathType]]
-)
+WindowsPrefixMappings = Mapping[str, PathType] | Iterable[tuple[str, PathType]]
 
 
 def probe_bytes(
@@ -136,6 +136,35 @@ def parse_file(
     return _apply_strict(ParseResult.from_dict(payload), strict)
 
 
+def decode_geometry_bytes(
+    data: BytesLike,
+    *,
+    filename: str | None = None,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+) -> GeometryResult:
+    """Decode modern part geometry into the source-oriented geometry model."""
+    payload = _load_json(
+        _core.decode_geometry_bytes_json(bytes(data), filename, _profile_name(profile))
+    )
+    return _apply_geometry_strict(GeometryResult.from_dict(payload), strict)
+
+
+def decode_geometry_file(
+    path: PathType,
+    *,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+) -> GeometryResult:
+    """Decode modern part geometry while retaining provenance and loss details."""
+    payload = _load_json(
+        _core.decode_geometry_file_json(
+            os.fsdecode(os.fspath(path)), _profile_name(profile)
+        )
+    )
+    return _apply_geometry_strict(GeometryResult.from_dict(payload), strict)
+
+
 def scan_project(
     path: PathType,
     *,
@@ -159,11 +188,7 @@ def scan_project(
     payload = _load_json(
         _core.scan_project_json(
             os.fsdecode(os.fspath(path)),
-            (
-                None
-                if project_root is None
-                else os.fsdecode(os.fspath(project_root))
-            ),
+            (None if project_root is None else os.fsdecode(os.fspath(project_root))),
             configuration,
             [os.fsdecode(os.fspath(item)) for item in search_directories],
             [
@@ -195,4 +220,10 @@ def _mode_name(mode: str | ExtractionMode) -> str:
 def _apply_strict(result: ParseResult, strict: bool) -> ParseResult:
     if strict and result.status is not ParseStatus.PARSED:
         raise ParseError(result)
+    return result
+
+
+def _apply_geometry_strict(result: GeometryResult, strict: bool) -> GeometryResult:
+    if strict and result.status is not GeometryStatus.DECODED:
+        raise GeometryError(result)
     return result

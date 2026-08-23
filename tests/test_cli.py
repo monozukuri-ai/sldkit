@@ -15,9 +15,7 @@ def modern_file(
 ) -> bytes:
     compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
     compressed = compressor.compress(payload) + compressor.flush()
-    name = bytes(
-        ((value << 4) & 0xF0) | (value >> 4) for value in name_value
-    )
+    name = bytes(((value << 4) & 0xF0) | (value >> 4) for value in name_value)
     return b"".join(
         (
             b"SLDK",
@@ -59,6 +57,19 @@ def test_parse_cli_accepts_modern_partial_result(tmp_path, capsys):
     assert exit_code == 0
     assert output["status"] == "partial"
     assert output["document"]["document_kind"]["value"] == "part"
+
+
+def test_geometry_cli_accepts_explicit_partial_result(tmp_path, capsys):
+    path = tmp_path / "part.SLDPRT"
+    path.write_bytes(modern_file())
+
+    exit_code = main(["geometry", str(path)])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["status"] == "partial"
+    assert output["geometry"]["fidelity"]["geometry_transferred"] is False
+    assert output["geometry"]["model"]["bodies"] == []
 
 
 def test_inspect_and_extract_cli_use_inventory_entry_id(tmp_path, capsys):

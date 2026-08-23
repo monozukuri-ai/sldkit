@@ -1,5 +1,7 @@
 //! High-level path and byte entry points for `SolidWorks` parsing.
 
+mod geometry;
+mod legacy_semantics;
 mod modern_semantics;
 mod project;
 
@@ -18,9 +20,10 @@ use sldkit_container::{
 };
 use sldkit_core::{
     CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind, Envelope,
-    ExtractionMode, ExtractionResult, ExtractionStatus, InventoryResult, InventoryStatus,
-    ParseResult, ParseStatus, ProbeConfidence, ProbeResult, ProbeStatus, ResourceLimits,
-    SourceDocument, SourceInfo, SourceInputKind, SourceValue, StreamExtraction, ValueOrigin,
+    ExtractionMode, ExtractionResult, ExtractionStatus, GeometryResult, GeometryStatus,
+    InventoryResult, InventoryStatus, ParseResult, ParseStatus, ProbeConfidence, ProbeResult,
+    ProbeStatus, ResourceLimits, SourceDocument, SourceInfo, SourceInputKind, SourceValue,
+    StreamExtraction, ValueOrigin,
 };
 
 /// Probe bytes without relying on a filename extension.
@@ -104,10 +107,40 @@ pub fn extract_path(
     }
 }
 
+/// Decode modern Part B-Rep and display tessellation from in-memory bytes.
+///
+/// This capability is intentionally separate from [`parse_bytes`]: metadata
+/// callers do not pay the geometry cost, and exact stream extraction remains
+/// independently available through [`extract_bytes`].
+#[must_use]
+pub fn decode_geometry_bytes(
+    data: &[u8],
+    filename: Option<&str>,
+    limits: &ResourceLimits,
+) -> GeometryResult {
+    geometry::decode(data, filename, SourceInputKind::Bytes, limits)
+}
+
+/// Read a bounded path and decode its modern Part geometry.
+#[must_use]
+pub fn decode_geometry_path(path: impl AsRef<Path>, limits: &ResourceLimits) -> GeometryResult {
+    let path = path.as_ref();
+    let label = path.to_string_lossy().into_owned();
+    match read_path_bounded(path, limits) {
+        Ok(data) => geometry::decode(&data, Some(&label), SourceInputKind::Path, limits),
+        Err(failure) => GeometryResult {
+            status: GeometryStatus::Rejected,
+            geometry: None,
+            diagnostics: vec![failure.diagnostic],
+        },
+    }
+}
+
 /// Build a source-faithful result from in-memory bytes.
 ///
-/// The bounded modern profile decodes metadata and references. Unsupported
-/// semantic streams remain traceable and keep the result partial.
+/// The bounded semantic profiles decode supported source metadata and
+/// references. Unsupported streams remain traceable and keep the result
+/// partial.
 #[must_use]
 pub fn parse_bytes(data: &[u8], filename: Option<&str>, limits: &ResourceLimits) -> ParseResult {
     parse_bytes_with_source(data, filename, SourceInputKind::Bytes, limits)
@@ -167,14 +200,23 @@ fn parse_bytes_with_source(
             semantic_coverage: None,
         },
         InventoryStatus::Complete | InventoryStatus::Partial | InventoryStatus::Unsupported => {
-            if inspection
+            match inspection
                 .inventory
                 .as_ref()
-                .is_some_and(|inventory| inventory.envelope == Envelope::ModernChunk)
+                .map(|inventory| inventory.envelope)
             {
-                recognized_modern(data, filename, input_kind, inspection, limits)
-            } else {
-                recognized_but_unsupported(data, filename, input_kind, inspection)
+                Some(Envelope::ModernChunk) => {
+                    recognized_modern(data, filename, input_kind, inspection, limits)
+                }
+                Some(Envelope::Ole2Cfb)
+                    if inspection
+                        .inventory
+                        .as_ref()
+                        .is_some_and(legacy_semantics::is_solidworks_candidate) =>
+                {
+                    recognized_legacy(data, filename, input_kind, inspection, limits)
+                }
+                _ => recognized_but_unsupported(data, filename, input_kind, inspection),
             }
         }
     }
@@ -199,7 +241,7 @@ fn recognized_modern(
             "format.modern_profile_partial",
             DiagnosticSeverity::Info,
             DiagnosticKind::Unsupported,
-            "the current profile decodes modern document metadata and references; feature and geometry semantics remain unsupported",
+            "this metadata profile excludes feature and geometry semantics; use the explicit geometry capability for modern Part geometry",
         ));
     }
 
@@ -223,6 +265,66 @@ fn recognized_modern(
         references: facts.references,
         preview: facts.preview,
         sheets: facts.sheets,
+        unknown_records: facts.unknown_records,
+    };
+
+    ParseResult {
+        status: if facts.rejected {
+            ParseStatus::Rejected
+        } else {
+            ParseStatus::Partial
+        },
+        document: Some(document),
+        inventory: inspection.inventory,
+        diagnostics,
+        coverage: inspection.coverage,
+        semantic_coverage: Some(facts.semantic_coverage),
+    }
+}
+
+fn recognized_legacy(
+    data: &[u8],
+    filename: Option<&str>,
+    input_kind: SourceInputKind,
+    inspection: InventoryResult,
+    limits: &ResourceLimits,
+) -> ParseResult {
+    let Some(inventory) = inspection.inventory.as_ref() else {
+        return recognized_but_unsupported(data, filename, input_kind, inspection);
+    };
+    let filename_kind = document_kind_hint(filename);
+    let facts = legacy_semantics::decode(data, inventory, &filename_kind, limits);
+    let mut diagnostics = inspection.diagnostics;
+    diagnostics.extend(facts.diagnostics);
+    if !facts.rejected {
+        diagnostics.push(Diagnostic::new(
+            "format.legacy_profile_partial",
+            DiagnosticSeverity::Info,
+            DiagnosticKind::Unsupported,
+            "the current legacy profile decodes bounded metadata and previews; document features and geometry remain unsupported",
+        ));
+    }
+
+    let byte_len = u64::try_from(data.len()).unwrap_or(u64::MAX);
+    let document = SourceDocument {
+        source: SourceInfo {
+            input_kind,
+            label: filename.map(str::to_owned),
+            byte_len,
+            sha256: sha256_hex(data),
+        },
+        envelope: SourceValue::new(
+            Envelope::Ole2Cfb,
+            ValueOrigin::Source,
+            vec!["signature.ole2_cfb".to_owned()],
+        ),
+        document_kind: facts.document_kind,
+        internal_version: facts.internal_version,
+        configurations: facts.configurations,
+        properties: facts.properties,
+        references: Vec::new(),
+        preview: facts.preview,
+        sheets: Vec::new(),
         unknown_records: facts.unknown_records,
     };
 
@@ -488,14 +590,15 @@ const fn empty_coverage(total_bytes: u64) -> CoverageReport {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::{Cursor, Write};
 
+    use cfb::Version;
     use crc32fast::Hasher as Crc32;
     use flate2::{Compression, write::DeflateEncoder};
     use sldkit_core::{
-        BinaryResource, DiagnosticKind, DocumentKind, Envelope, ExtractionMode, ExtractionStatus,
-        ParseStatus, PropertyValueState, ReferenceKind, ResourceLimits, SourceInputKind,
-        ValueOrigin,
+        BinaryResource, BinaryResourceKind, DiagnosticKind, DocumentKind, Envelope, ExtractionMode,
+        ExtractionStatus, ParseStatus, PropertyKind, PropertyValueState, ReferenceKind,
+        ResourceLimits, SourceInputKind, ValueOrigin,
     };
     use tempfile::NamedTempFile;
 
@@ -617,6 +720,147 @@ mod tests {
         output
     }
 
+    fn summary_information(author: &str, include_code_page: bool) -> Vec<u8> {
+        const SUMMARY_FMTID: [u8; 16] = [
+            0xe0, 0x85, 0x9f, 0xf2, 0xf9, 0x4f, 0x68, 0x10, 0xab, 0x91, 0x08, 0x00, 0x2b, 0x27,
+            0xb3, 0xd9,
+        ];
+
+        let mut code_page = Vec::new();
+        code_page.extend_from_slice(&0x0002_u16.to_le_bytes());
+        code_page.extend_from_slice(&0_u16.to_le_bytes());
+        code_page.extend_from_slice(&65001_u16.to_le_bytes());
+        code_page.extend_from_slice(&0_u16.to_le_bytes());
+
+        let mut author_value = Vec::new();
+        author_value.extend_from_slice(&0x001e_u16.to_le_bytes());
+        author_value.extend_from_slice(&0_u16.to_le_bytes());
+        let author_bytes = author.as_bytes();
+        author_value.extend_from_slice(
+            &u32::try_from(author_bytes.len().saturating_add(1))
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
+        author_value.extend_from_slice(author_bytes);
+        author_value.push(0);
+        while !author_value.len().is_multiple_of(4) {
+            author_value.push(0);
+        }
+
+        let property_count = if include_code_page { 2_u32 } else { 1_u32 };
+        let table_end = 8_usize + usize::try_from(property_count).unwrap_or(0) * 8;
+        let author_offset = table_end
+            + if include_code_page {
+                code_page.len()
+            } else {
+                0
+            };
+        let section_size = author_offset + author_value.len();
+        let mut section = Vec::with_capacity(section_size);
+        section.extend_from_slice(
+            &u32::try_from(section_size)
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
+        section.extend_from_slice(&property_count.to_le_bytes());
+        if include_code_page {
+            section.extend_from_slice(&1_u32.to_le_bytes());
+            section.extend_from_slice(&u32::try_from(table_end).unwrap_or(u32::MAX).to_le_bytes());
+        }
+        section.extend_from_slice(&4_u32.to_le_bytes());
+        section.extend_from_slice(
+            &u32::try_from(author_offset)
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
+        if include_code_page {
+            section.extend_from_slice(&code_page);
+        }
+        section.extend_from_slice(&author_value);
+
+        let mut output = Vec::with_capacity(48 + section.len());
+        output.extend_from_slice(&0xfffe_u16.to_le_bytes());
+        output.extend_from_slice(&0_u16.to_le_bytes());
+        output.extend_from_slice(&0_u32.to_le_bytes());
+        output.extend_from_slice(&[0; 16]);
+        output.extend_from_slice(&1_u32.to_le_bytes());
+        output.extend_from_slice(&SUMMARY_FMTID);
+        output.extend_from_slice(&48_u32.to_le_bytes());
+        output.extend_from_slice(&section);
+        output
+    }
+
+    fn configuration_manager_header_2200() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut output = Vec::new();
+        push_archive_class(&mut output, "dmConfigMgrHeader_c")?;
+        output.extend_from_slice(&1_u16.to_le_bytes());
+        push_archive_class(&mut output, "dmConfigHeader_c")?;
+        output.extend_from_slice(&0_u32.to_le_bytes());
+        push_archive_utf16_string(&mut output, "Default")?;
+        output.extend_from_slice(&0_u32.to_le_bytes());
+        output.extend_from_slice(&100_u32.to_le_bytes());
+        push_archive_utf16_string(&mut output, "Default")?;
+        output.extend_from_slice(&u32::MAX.to_le_bytes());
+        Ok(output)
+    }
+
+    fn preview_dib() -> Vec<u8> {
+        let mut dib = Vec::new();
+        dib.extend_from_slice(&40_u32.to_le_bytes());
+        dib.extend_from_slice(&1_i32.to_le_bytes());
+        dib.extend_from_slice(&1_i32.to_le_bytes());
+        dib.extend_from_slice(&1_u16.to_le_bytes());
+        dib.extend_from_slice(&24_u16.to_le_bytes());
+        dib.extend_from_slice(&0_u32.to_le_bytes());
+        dib.extend_from_slice(&4_u32.to_le_bytes());
+        dib.extend_from_slice(&0_i32.to_le_bytes());
+        dib.extend_from_slice(&0_i32.to_le_bytes());
+        dib.extend_from_slice(&0_u32.to_le_bytes());
+        dib.extend_from_slice(&0_u32.to_le_bytes());
+
+        let mut output = Vec::new();
+        output.extend_from_slice(&44_u32.to_le_bytes());
+        output.extend_from_slice(&dib);
+        output.extend_from_slice(&[0; 4]);
+        output
+    }
+
+    fn legacy_file(summary: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let cursor = Cursor::new(Vec::new());
+        let mut compound = cfb::CompoundFile::create_with_version(Version::V3, cursor)?;
+        compound.create_storage("/Contents")?;
+        compound.create_storage("/_MO_VERSION_2200")?;
+        {
+            let mut stream = compound.create_stream("/\u{5}SummaryInformation")?;
+            stream.write_all(summary)?;
+        }
+        {
+            let mut stream = compound.create_stream("/Contents/CMgrHdr2")?;
+            stream.write_all(&configuration_manager_header_2200()?)?;
+        }
+        {
+            let mut stream = compound.create_stream("/Contents/Config-0")?;
+            stream.write_all(b"opaque configuration data")?;
+        }
+        {
+            let mut stream = compound.create_stream("/Preview")?;
+            stream.write_all(&preview_dib())?;
+        }
+        compound.flush()?;
+        Ok(compound.into_inner().into_inner())
+    }
+
+    fn generic_ole_file() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let cursor = Cursor::new(Vec::new());
+        let mut compound = cfb::CompoundFile::create_with_version(Version::V3, cursor)?;
+        {
+            let mut stream = compound.create_stream("/Document")?;
+            stream.write_all(b"generic compound-file payload")?;
+        }
+        compound.flush()?;
+        Ok(compound.into_inner().into_inner())
+    }
+
     fn assert_resource_extracts(
         input: &[u8],
         resource: &BinaryResource,
@@ -652,6 +896,146 @@ mod tests {
             assert_eq!(document.document_kind.origin, ValueOrigin::Hint);
             assert_eq!(document.source.input_kind, SourceInputKind::Bytes);
         }
+    }
+
+    #[test]
+    fn generic_compound_file_is_not_claimed_as_a_solidworks_document()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = generic_ole_file()?;
+        let result = parse_bytes(
+            &input,
+            Some("not-solidworks.SLDPRT"),
+            &ResourceLimits::service(),
+        );
+
+        assert_eq!(result.status, ParseStatus::Unsupported);
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "format.ole2_semantics_unsupported"
+                && diagnostic.kind == DiagnosticKind::Unsupported
+        }));
+        let document = result.document.as_ref().ok_or("document missing")?;
+        assert_eq!(document.envelope.value, Envelope::Ole2Cfb);
+        assert!(document.properties.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_metadata_configuration_and_dib_preview_are_source_faithful()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = legacy_file(&summary_information("Ada", true))?;
+        let result = parse_bytes(&input, Some("fixture.SLDPRT"), &ResourceLimits::service());
+
+        assert_eq!(result.status, ParseStatus::Partial);
+        let document = result.document.as_ref().ok_or("document missing")?;
+        assert_eq!(document.envelope.value, Envelope::Ole2Cfb);
+        assert_eq!(document.document_kind.value, DocumentKind::Part);
+        assert_eq!(document.document_kind.origin, ValueOrigin::Hint);
+        assert_eq!(
+            document
+                .internal_version
+                .as_ref()
+                .map(|version| (version.value, version.origin)),
+            Some((2_200, ValueOrigin::Source))
+        );
+        assert_eq!(document.configurations.len(), 1);
+        assert_eq!(
+            document.configurations[0]
+                .name
+                .as_ref()
+                .map(|name| (name.value.as_str(), name.origin)),
+            Some(("Default", ValueOrigin::Source))
+        );
+
+        let author = document
+            .properties
+            .iter()
+            .find(|property| property.name.value == "Author")
+            .ok_or("author property missing")?;
+        assert_eq!(author.kind, PropertyKind::Core);
+        assert_eq!(author.value_state, PropertyValueState::Present);
+        assert_eq!(
+            author.raw_value.as_ref().map(|value| value.value.as_str()),
+            Some("Ada")
+        );
+
+        let preview_resource = document.preview.as_ref().ok_or("preview missing")?;
+        assert_eq!(preview_resource.kind, BinaryResourceKind::PreviewDib);
+        let preview = preview_dib();
+        assert_resource_extracts(&input, preview_resource, &preview[4..])?;
+        assert!(document.references.is_empty());
+        assert!(document.sheets.is_empty());
+        assert!(document.unknown_records.iter().any(|record| {
+            record.stream_path.as_deref() == Some("/Contents/Config-0")
+                && record.reason_code == "legacy.configuration.unsupported"
+        }));
+
+        let semantic = result
+            .semantic_coverage
+            .ok_or("semantic coverage missing")?;
+        assert_eq!(
+            semantic.fully_interpreted_streams
+                + semantic.partially_interpreted_streams
+                + semantic.uninterpreted_streams
+                + semantic.malformed_streams,
+            semantic.decoded_streams_total
+        );
+        assert!(!result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "legacy.property_type_or_encoding_unsupported"
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_ascii_property_without_code_page_has_one_precise_diagnostic()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = legacy_file(&summary_information("Ada", false))?;
+        let result = parse_bytes(&input, Some("fixture.SLDPRT"), &ResourceLimits::service());
+        let document = result.document.as_ref().ok_or("document missing")?;
+        assert!(document.properties.iter().any(|property| {
+            property.name.value == "Author"
+                && property
+                    .raw_value
+                    .as_ref()
+                    .is_some_and(|value| value.value == "Ada")
+        }));
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "legacy.property_code_page_missing")
+                .count(),
+            1
+        );
+        assert!(!result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "legacy.property_type_or_encoding_unsupported"
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_legacy_property_stream_is_not_an_empty_success()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = legacy_file(&[0xfe, 0xff])?;
+        let result = parse_bytes(&input, Some("fixture.SLDPRT"), &ResourceLimits::service());
+
+        assert_eq!(result.status, ParseStatus::Partial);
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "legacy.property_set_header_truncated"
+                && diagnostic.kind == DiagnosticKind::Malformed
+        }));
+        let document = result.document.as_ref().ok_or("document missing")?;
+        assert!(document.properties.is_empty());
+        assert!(document.unknown_records.iter().any(|record| {
+            record.stream_path.as_deref() == Some("/\u{5}SummaryInformation")
+                && record.reason_code == "legacy.property_set.malformed"
+        }));
+        assert_eq!(
+            result
+                .semantic_coverage
+                .map(|coverage| coverage.malformed_streams),
+            Some(1)
+        );
+        Ok(())
     }
 
     #[test]

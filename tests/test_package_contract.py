@@ -28,6 +28,12 @@ def test_rust_workspace_dependency_boundary():
         assert dependencies.isdisjoint(FORBIDDEN), manifest
 
 
+def test_python_extension_uses_python_310_abi3():
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    features = set(workspace["workspace"]["dependencies"]["pyo3"]["features"])
+    assert {"extension-module", "abi3-py310"} <= features
+
+
 def test_private_development_inputs_are_explicitly_excluded_from_artifacts():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     excluded = set(project["tool"]["maturin"]["exclude"])

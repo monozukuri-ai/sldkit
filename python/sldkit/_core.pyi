@@ -23,3 +23,9 @@ def extract_bytes_result(
 def extract_file_result(
     path: str, entry_id: str, mode: str, profile: str
 ) -> tuple[str, bytes | None]: ...
+def extract_resource_bytes_result(
+    data: bytes, resource_json: str, profile: str
+) -> tuple[str, bytes | None]: ...
+def extract_resource_file_result(
+    path: str, resource_json: str, profile: str
+) -> tuple[str, bytes | None]: ...

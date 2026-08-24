@@ -9,6 +9,7 @@ from typing import Any
 from . import _core
 from .errors import GeometryError, ParseError
 from .model import (
+    BinaryResource,
     ExtractionMode,
     ExtractionResult,
     GeometryResult,
@@ -102,6 +103,40 @@ def extract_file(
         os.fsdecode(os.fspath(path)),
         entry_id,
         _mode_name(mode),
+        _profile_name(profile),
+    )
+    return StreamExtraction(
+        result=ExtractionResult.from_dict(_load_json(metadata)), data=payload
+    )
+
+
+def extract_resource_bytes(
+    data: BytesLike,
+    resource: BinaryResource,
+    *,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+) -> StreamExtraction:
+    """Extract and revalidate the exact bytes described by a binary resource."""
+    metadata, payload = _core.extract_resource_bytes_result(
+        bytes(data),
+        json.dumps(resource.to_dict(), separators=(",", ":"), sort_keys=True),
+        _profile_name(profile),
+    )
+    return StreamExtraction(
+        result=ExtractionResult.from_dict(_load_json(metadata)), data=payload
+    )
+
+
+def extract_resource_file(
+    path: PathType,
+    resource: BinaryResource,
+    *,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+) -> StreamExtraction:
+    """Read a bounded file and extract one exact binary resource from it."""
+    metadata, payload = _core.extract_resource_file_result(
+        os.fsdecode(os.fspath(path)),
+        json.dumps(resource.to_dict(), separators=(",", ":"), sort_keys=True),
         _profile_name(profile),
     )
     return StreamExtraction(

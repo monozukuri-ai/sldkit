@@ -6,7 +6,7 @@ use pyo3::{
     wrap_pyfunction,
 };
 use serde::Serialize;
-use sldkit_core::{ExtractionMode, LimitProfile, ResourceLimits, StreamExtraction};
+use sldkit_core::{BinaryResource, ExtractionMode, LimitProfile, ResourceLimits, StreamExtraction};
 
 #[pyfunction]
 fn probe_bytes_json(data: &[u8], profile: &str) -> PyResult<String> {
@@ -150,6 +150,40 @@ fn extract_file_result<'py>(
     )
 }
 
+#[pyfunction]
+fn extract_resource_bytes_result<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    resource_json: &str,
+    profile: &str,
+) -> PyResult<(String, Option<Bound<'py, PyBytes>>)> {
+    let resource = binary_resource(resource_json)?;
+    extraction_to_python(
+        py,
+        sldkit_parser::extract_resource_bytes(data, &resource, &limits_for_profile(profile)?),
+    )
+}
+
+#[pyfunction]
+fn extract_resource_file_result<'py>(
+    py: Python<'py>,
+    path: &str,
+    resource_json: &str,
+    profile: &str,
+) -> PyResult<(String, Option<Bound<'py, PyBytes>>)> {
+    let resource = binary_resource(resource_json)?;
+    extraction_to_python(
+        py,
+        sldkit_parser::extract_resource_path(path, &resource, &limits_for_profile(profile)?),
+    )
+}
+
+fn binary_resource(resource_json: &str) -> PyResult<BinaryResource> {
+    serde_json::from_str(resource_json).map_err(|error| {
+        PyValueError::new_err(format!("invalid binary resource descriptor: {error}"))
+    })
+}
+
 fn extraction_mode(mode: &str) -> PyResult<ExtractionMode> {
     match mode {
         "stored" => Ok(ExtractionMode::Stored),
@@ -198,5 +232,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(scan_project_json, module)?)?;
     module.add_function(wrap_pyfunction!(extract_bytes_result, module)?)?;
     module.add_function(wrap_pyfunction!(extract_file_result, module)?)?;
+    module.add_function(wrap_pyfunction!(extract_resource_bytes_result, module)?)?;
+    module.add_function(wrap_pyfunction!(extract_resource_file_result, module)?)?;
     Ok(())
 }

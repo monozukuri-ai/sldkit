@@ -312,6 +312,45 @@ def test_inspect_is_deterministic_and_extracts_both_representations():
     assert stored.data != decoded.data
 
 
+def test_resource_extraction_returns_only_validated_descriptor_range(tmp_path):
+    payload = modern_file(b"prefix-preview-suffix", "Contents/Preview")
+    inspected = sldkit.inspect_bytes(payload)
+    assert inspected.inventory is not None
+    entry = inspected.inventory.entries[0]
+    resource = sldkit.BinaryResource(
+        kind=sldkit.BinaryResourceKind.PREVIEW_PNG,
+        entry_id=entry.id,
+        stream_path="Contents/Preview",
+        decoded_offset=7,
+        byte_len=7,
+        sha256=hashlib.sha256(b"preview").hexdigest(),
+        media_type="image/png",
+    )
+
+    extracted = sldkit.extract_resource_bytes(payload, resource)
+    assert extracted.result.status is sldkit.ExtractionStatus.EXTRACTED
+    assert extracted.result.byte_len == 7
+    assert extracted.data == b"preview"
+
+    path = tmp_path / "drawing.SLDDRW"
+    path.write_bytes(payload)
+    assert sldkit.extract_resource_file(path, resource).data == b"preview"
+
+    wrong_digest = sldkit.BinaryResource(
+        kind=resource.kind,
+        entry_id=resource.entry_id,
+        stream_path=resource.stream_path,
+        decoded_offset=resource.decoded_offset,
+        byte_len=resource.byte_len,
+        sha256="0" * 64,
+        media_type=resource.media_type,
+    )
+    rejected = sldkit.extract_resource_bytes(payload, wrong_digest)
+    assert rejected.result.status is sldkit.ExtractionStatus.MALFORMED
+    assert rejected.data is None
+    assert rejected.result.diagnostics[-1].code == "extract.resource_sha256_mismatch"
+
+
 def test_zip_inventory_detects_content_without_decoding_opc_semantics():
     payload = stored_zip()
     result = sldkit.inspect_bytes(payload, filename="package.bin")

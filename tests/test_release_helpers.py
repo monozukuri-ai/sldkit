@@ -37,6 +37,15 @@ def test_release_artifact_rejects_private_design_material(tmp_path: Path):
         )
 
 
+def test_release_artifact_rejects_non_abi3_wheel(tmp_path: Path):
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_artifacts.py"))
+    wheel = tmp_path / "sldkit-0.1.0-cp313-cp313-any.whl"
+    wheel.touch()
+
+    with pytest.raises(AssertionError, match="not Python 3.10\\+ ABI3"):
+        namespace["_check_wheel"](wheel)
+
+
 def test_wheel_smoke_requires_exactly_one_wheel(tmp_path: Path):
     namespace = runpy.run_path(str(ROOT / "scripts/smoke_wheel_artifact.py"))
     resolve_wheel = namespace["resolve_wheel"]

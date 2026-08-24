@@ -19,8 +19,8 @@ use sldkit_container::{
     probe_bytes as probe_container_bytes,
 };
 use sldkit_core::{
-    CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind, Envelope,
-    ExtractionMode, ExtractionResult, ExtractionStatus, GeometryResult, GeometryStatus,
+    BinaryResource, CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind,
+    Envelope, ExtractionMode, ExtractionResult, ExtractionStatus, GeometryResult, GeometryStatus,
     InventoryResult, InventoryStatus, ParseResult, ParseStatus, ProbeConfidence, ProbeResult,
     ProbeStatus, ResourceLimits, SourceDocument, SourceInfo, SourceInputKind, SourceValue,
     StreamExtraction, ValueOrigin,
@@ -105,6 +105,135 @@ pub fn extract_path(
             }
         }
     }
+}
+
+/// Extract the exact byte range described by a parser-produced binary resource.
+///
+/// The containing entry is decoded under the supplied limits, then its path,
+/// range, and SHA-256 digest are revalidated before any bytes are returned.
+#[must_use]
+pub fn extract_resource_bytes(
+    data: &[u8],
+    resource: &BinaryResource,
+    limits: &ResourceLimits,
+) -> StreamExtraction {
+    let extraction = extract_bytes(data, &resource.entry_id, ExtractionMode::Decoded, limits);
+    if extraction.result.status != ExtractionStatus::Extracted {
+        return extraction;
+    }
+
+    let actual_path = extraction
+        .result
+        .entry
+        .as_ref()
+        .and_then(|entry| entry.path.as_deref());
+    if actual_path != Some(resource.stream_path.as_str()) {
+        let diagnostic = Diagnostic::new(
+            "extract.resource_stream_mismatch",
+            DiagnosticSeverity::Error,
+            DiagnosticKind::Malformed,
+            "binary resource stream path does not match the extracted inventory entry",
+        )
+        .in_stream(resource.stream_path.clone())
+        .with_detail("entry_id", resource.entry_id.clone())
+        .with_detail("expected_path", resource.stream_path.clone())
+        .with_detail("actual_path", actual_path.unwrap_or("<none>"));
+        return malformed_resource_extraction(extraction, diagnostic);
+    }
+
+    let Some(decoded) = extraction.data.as_deref() else {
+        let diagnostic = Diagnostic::new(
+            "extract.resource_payload_missing",
+            DiagnosticSeverity::Error,
+            DiagnosticKind::Malformed,
+            "decoded entry was reported as extracted without a payload",
+        )
+        .in_stream(resource.stream_path.clone())
+        .with_detail("entry_id", resource.entry_id.clone());
+        return malformed_resource_extraction(extraction, diagnostic);
+    };
+
+    let end = resource
+        .decoded_offset
+        .checked_add(resource.byte_len)
+        .filter(|end| *end <= u64::try_from(decoded.len()).unwrap_or(u64::MAX));
+    let range = end.and_then(|end| {
+        Some(usize::try_from(resource.decoded_offset).ok()?..usize::try_from(end).ok()?)
+    });
+    let Some(payload) = range.and_then(|range| decoded.get(range)) else {
+        let diagnostic = Diagnostic::new(
+            "extract.resource_range_invalid",
+            DiagnosticSeverity::Error,
+            DiagnosticKind::Malformed,
+            "binary resource range is outside the decoded inventory entry",
+        )
+        .at_offset(resource.decoded_offset)
+        .in_stream(resource.stream_path.clone())
+        .with_detail("entry_id", resource.entry_id.clone())
+        .with_detail("resource_byte_len", resource.byte_len.to_string())
+        .with_detail("decoded_byte_len", decoded.len().to_string());
+        return malformed_resource_extraction(extraction, diagnostic);
+    };
+
+    let actual_sha256 = sha256_hex(payload);
+    if actual_sha256 != resource.sha256 {
+        let diagnostic = Diagnostic::new(
+            "extract.resource_sha256_mismatch",
+            DiagnosticSeverity::Error,
+            DiagnosticKind::Malformed,
+            "binary resource SHA-256 does not match the parser-produced descriptor",
+        )
+        .at_offset(resource.decoded_offset)
+        .in_stream(resource.stream_path.clone())
+        .with_detail("entry_id", resource.entry_id.clone())
+        .with_detail("expected_sha256", resource.sha256.clone())
+        .with_detail("actual_sha256", actual_sha256);
+        return malformed_resource_extraction(extraction, diagnostic);
+    }
+
+    let data = payload.to_vec();
+    let mut result = extraction.result;
+    result.byte_len = Some(resource.byte_len);
+    result.sha256 = Some(resource.sha256.clone());
+    StreamExtraction {
+        result,
+        data: Some(data),
+    }
+}
+
+/// Read a bounded path and extract one exact parser-produced binary resource.
+#[must_use]
+pub fn extract_resource_path(
+    path: impl AsRef<Path>,
+    resource: &BinaryResource,
+    limits: &ResourceLimits,
+) -> StreamExtraction {
+    match read_path_bounded(path.as_ref(), limits) {
+        Ok(data) => extract_resource_bytes(&data, resource, limits),
+        Err(failure) => StreamExtraction {
+            result: ExtractionResult {
+                status: ExtractionStatus::Rejected,
+                mode: ExtractionMode::Decoded,
+                entry: None,
+                byte_len: None,
+                sha256: None,
+                diagnostics: vec![failure.diagnostic],
+            },
+            data: None,
+        },
+    }
+}
+
+fn malformed_resource_extraction(
+    extraction: StreamExtraction,
+    diagnostic: Diagnostic,
+) -> StreamExtraction {
+    let mut result = extraction.result;
+    result.status = ExtractionStatus::Malformed;
+    result.byte_len = None;
+    result.sha256 = None;
+    result.diagnostics.push(diagnostic);
+    StreamExtraction { result, data: None }
 }
 
 /// Decode modern Part B-Rep and display tessellation from in-memory bytes.
@@ -596,13 +725,13 @@ mod tests {
     use crc32fast::Hasher as Crc32;
     use flate2::{Compression, write::DeflateEncoder};
     use sldkit_core::{
-        BinaryResource, BinaryResourceKind, DiagnosticKind, DocumentKind, Envelope, ExtractionMode,
+        BinaryResource, BinaryResourceKind, DiagnosticKind, DocumentKind, Envelope,
         ExtractionStatus, ParseStatus, PropertyKind, PropertyValueState, ReferenceKind,
         ResourceLimits, SourceInputKind, ValueOrigin,
     };
     use tempfile::NamedTempFile;
 
-    use super::{extract_bytes, parse_bytes, parse_path};
+    use super::{extract_resource_bytes, inspect_bytes, parse_bytes, parse_path, sha256_hex};
 
     const EMPTY_ZIP: &[u8] =
         b"PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
@@ -861,24 +990,70 @@ mod tests {
         Ok(compound.into_inner().into_inner())
     }
 
-    fn assert_resource_extracts(
-        input: &[u8],
-        resource: &BinaryResource,
-        expected: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let extraction = extract_bytes(
-            input,
-            &resource.entry_id,
-            ExtractionMode::Decoded,
-            &ResourceLimits::desktop(),
-        );
+    fn assert_resource_extracts(input: &[u8], resource: &BinaryResource, expected: &[u8]) {
+        let extraction = extract_resource_bytes(input, resource, &ResourceLimits::desktop());
         assert_eq!(extraction.result.status, ExtractionStatus::Extracted);
-        let decoded = extraction.data.as_ref().ok_or("resource stream missing")?;
-        let start = usize::try_from(resource.decoded_offset)?;
-        let end = start
-            .checked_add(usize::try_from(resource.byte_len)?)
-            .ok_or("resource range overflow")?;
-        assert_eq!(decoded.get(start..end), Some(expected));
+        assert_eq!(extraction.data.as_deref(), Some(expected));
+        assert_eq!(extraction.result.byte_len, Some(resource.byte_len));
+        assert_eq!(
+            extraction.result.sha256.as_deref(),
+            Some(resource.sha256.as_str())
+        );
+    }
+
+    #[test]
+    fn resource_extraction_revalidates_stream_range_and_digest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = b"prefix-preview-suffix";
+        let input = modern_file(&[("Contents/Preview", decoded)])?;
+        let inventory = inspect_bytes(&input, None, &ResourceLimits::desktop());
+        let entry = inventory
+            .inventory
+            .as_ref()
+            .and_then(|value| value.entries.first())
+            .ok_or("inventory entry missing")?;
+        let resource = BinaryResource {
+            kind: BinaryResourceKind::PreviewPng,
+            entry_id: entry.id.clone(),
+            stream_path: "Contents/Preview".to_owned(),
+            decoded_offset: 7,
+            byte_len: 7,
+            sha256: sha256_hex(b"preview"),
+            media_type: "image/png".to_owned(),
+        };
+
+        let extracted = extract_resource_bytes(&input, &resource, &ResourceLimits::desktop());
+        assert_eq!(extracted.result.status, ExtractionStatus::Extracted);
+        assert_eq!(extracted.data.as_deref(), Some(b"preview".as_slice()));
+
+        let mut wrong_path = resource.clone();
+        wrong_path.stream_path = "Contents/Other".to_owned();
+        let mismatch = extract_resource_bytes(&input, &wrong_path, &ResourceLimits::desktop());
+        assert_eq!(mismatch.result.status, ExtractionStatus::Malformed);
+        assert_eq!(
+            mismatch.result.diagnostics[0].code,
+            "extract.resource_stream_mismatch"
+        );
+        assert!(mismatch.data.is_none());
+
+        let mut invalid_range = resource.clone();
+        invalid_range.decoded_offset = u64::MAX;
+        invalid_range.byte_len = 2;
+        let invalid = extract_resource_bytes(&input, &invalid_range, &ResourceLimits::desktop());
+        assert_eq!(invalid.result.status, ExtractionStatus::Malformed);
+        assert_eq!(
+            invalid.result.diagnostics[0].code,
+            "extract.resource_range_invalid"
+        );
+
+        let mut wrong_digest = resource;
+        wrong_digest.sha256 = "0".repeat(64);
+        let mismatch = extract_resource_bytes(&input, &wrong_digest, &ResourceLimits::desktop());
+        assert_eq!(mismatch.result.status, ExtractionStatus::Malformed);
+        assert_eq!(
+            mismatch.result.diagnostics[0].code,
+            "extract.resource_sha256_mismatch"
+        );
         Ok(())
     }
 
@@ -961,7 +1136,7 @@ mod tests {
         let preview_resource = document.preview.as_ref().ok_or("preview missing")?;
         assert_eq!(preview_resource.kind, BinaryResourceKind::PreviewDib);
         let preview = preview_dib();
-        assert_resource_extracts(&input, preview_resource, &preview[4..])?;
+        assert_resource_extracts(&input, preview_resource, &preview[4..]);
         assert!(document.references.is_empty());
         assert!(document.sheets.is_empty());
         assert!(document.unknown_records.iter().any(|record| {
@@ -1106,7 +1281,7 @@ mod tests {
         );
         assert!(document.preview.is_some());
         let preview_resource = document.preview.as_ref().ok_or("preview missing")?;
-        assert_resource_extracts(&input, preview_resource, &preview)?;
+        assert_resource_extracts(&input, preview_resource, &preview);
         assert_eq!(document.configurations.len(), 1);
         let configuration = &document.configurations[0];
         assert_eq!(configuration.index.value, 0);

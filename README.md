@@ -10,6 +10,7 @@ as a typed Python package through PyO3.
 |---|---|
 | Container detection and bounded inventory | Modern chunk, OLE2/CFB, and ZIP/OPC candidates |
 | Stored and decoded stream extraction | Supported where the container decoder recognizes the encoding |
+| Exact binary-resource extraction | Revalidates parser-produced path, decoded range, and SHA-256 before returning preview bytes |
 | Modern metadata, properties, configurations, and references | Partial, source-faithful profile |
 | Modern `.SLDPRT` B-Rep and tessellation | Explicit partial profile with provenance and loss records |
 | Directory project graph | Bounded and deterministic for decoded references |
@@ -49,6 +50,11 @@ for prop in result.document.properties if result.document else ():
     print(prop.name.value, prop.value_state, prop.raw_value)
 for diagnostic in result.diagnostics:
     print(diagnostic.code, diagnostic.kind, diagnostic.message)
+
+for sheet in result.document.sheets if result.document else ():
+    if sheet.preview is not None:
+        preview = sldkit.extract_resource_file("drawing.SLDDRW", sheet.preview)
+        assert preview.data is not None
 
 geometry = sldkit.decode_geometry_file("part.SLDPRT")
 if geometry.geometry is not None:
@@ -107,10 +113,11 @@ uv run pytest
 uv run ruff check .
 ```
 
-The cross-platform wheel gate builds one CPython 3.13 wheel per configured OS,
-inspects its contents, and installs it without dependencies or an index before
-running semantic parsing and project-graph smoke checks. A separate job rebuilds
-a Linux wheel from the source distribution and applies the same checks.
+The cross-platform wheel gate builds one CPython 3.10+ ABI3 wheel per configured
+OS, inspects its contents, and installs it without dependencies or an index on
+both Python 3.10 and 3.14 before running semantic parsing, exact-resource
+extraction, and project-graph smoke checks. A separate job rebuilds a Linux wheel
+from the source distribution and applies the same checks.
 
 ```bash
 uv run --frozen maturin build --release --locked --out dist

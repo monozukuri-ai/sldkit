@@ -38,6 +38,21 @@ def modern_stream(name: str, payload: bytes) -> bytes:
     )
 
 
+def preview_png() -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    return b"".join(
+        (
+            b"\x89PNG\r\n\x1a\n",
+            chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)),
+            chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\xff")),
+            chunk(b"IEND", b""),
+        )
+    )
+
+
 assert metadata.version("sldkit") == sldkit.__version__
 
 probe = sldkit.probe_bytes(OLE2_SIGNATURE)
@@ -71,13 +86,20 @@ properties = (
     b'<property name="empty"><lpwstr></lpwstr></property>'
     b"</propertySection></root>"
 )
+preview = preview_png()
 modern = b"SLDK" + (4).to_bytes(4, "big")
 modern += modern_stream("swXmlContents/Features", features)
 modern += modern_stream("docProps/custom.xml", properties)
+modern += modern_stream("PreviewPNG", preview)
 parsed = sldkit.parse_bytes(modern, filename="fixture.SLDPRT")
 assert parsed.status is sldkit.ParseStatus.PARTIAL
 assert parsed.document is not None
 assert parsed.document.document_kind.value is sldkit.DocumentKind.PART
+assert parsed.document.preview is not None
+resource = parsed.document.preview
+resource_bytes = sldkit.extract_resource_bytes(modern, resource)
+assert resource_bytes.result.status is sldkit.ExtractionStatus.EXTRACTED
+assert resource_bytes.data == preview
 assert {item.name.value: item.value_state for item in parsed.document.properties} == {
     "present": sldkit.PropertyValueState.PRESENT,
     "empty": sldkit.PropertyValueState.EMPTY,
@@ -112,6 +134,11 @@ part_xml = (
 )
 with tempfile.TemporaryDirectory() as directory:
     project_root = Path(directory)
+    preview_path = project_root / "preview.SLDPRT"
+    preview_path.write_bytes(modern)
+    resource_file = sldkit.extract_resource_file(preview_path, resource)
+    assert resource_file.result.status is sldkit.ExtractionStatus.EXTRACTED
+    assert resource_file.data == preview
     assembly_path = project_root / "root.SLDASM"
     part_path = project_root / "child.SLDPRT"
     assembly_path.write_bytes(

@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   wheel-smoke:
-    name: ${{ matrix.name }} / CPython 3.13
+    name: ${{ matrix.name }} / ABI3 Python 3.10+
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -53,12 +53,22 @@ jobs:
           sccache: true
       - name: Inspect artifact
         run: python scripts/verify_release_artifacts.py dist
-      - name: Isolated install and smoke
+      - name: Set up minimum supported Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Isolated install and smoke / Python 3.10
+        run: python scripts/smoke_wheel_artifact.py dist
+      - name: Set up newest supported Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Isolated install and smoke / Python 3.14
         run: python scripts/smoke_wheel_artifact.py dist
       - name: Upload wheel
         uses: actions/upload-artifact@v6
         with:
-          name: sldkit-wheel-${{ matrix.artifact }}-cp313
+          name: sldkit-wheel-${{ matrix.artifact }}-abi3-py310
           path: dist/*.whl
           if-no-files-found: error
 
@@ -81,17 +91,17 @@ jobs:
       - name: Extract sdist
         run: |
           mkdir -p dist/source
-          tar -xzf dist/sdist/sldkit-*.tar.gz -C dist/source
+          tar -xzf dist/sdist/sldkit-*.tar.gz --strip-components=1 -C dist/source
       # Maturin currently keeps workspace-only CLI entries in the sdist lockfile.
       # Let Cargo remove only packages outside the reduced sdist workspace before
       # requiring --locked for the actual wheel build (maturin issue #2609).
       - name: Synchronize reduced workspace lockfile
-        working-directory: dist/source/sldkit-0.1.0
+        working-directory: dist/source
         run: cargo metadata --format-version 1 > /dev/null
       - name: Build wheel from sdist
         uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
         with:
-          working-directory: dist/source/sldkit-0.1.0
+          working-directory: dist/source
           target: x86_64
           manylinux: "2_28"
           maturin-version: v1.14.1
@@ -100,14 +110,14 @@ jobs:
       - name: Inspect and smoke round-trip wheel
         run: |
           python scripts/verify_release_artifacts.py \
-            dist/sdist dist/source/sldkit-0.1.0/dist
+            dist/sdist dist/source/dist
           python scripts/smoke_wheel_artifact.py \
-            dist/source/sldkit-0.1.0/dist
+            dist/source/dist
       - name: Upload round-trip artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: sldkit-sdist-roundtrip-cp313
+          name: sldkit-sdist-roundtrip-abi3-py310
           path: |
             dist/sdist/*.tar.gz
-            dist/source/sldkit-0.1.0/dist/*.whl
+            dist/source/dist/*.whl
           if-no-files-found: error

@@ -10,7 +10,7 @@ parsed.
 |---|---|
 | Format probing | Detects modern chunk, OLE2/CFB, ZIP/OPC, malformed, and unknown candidates from content |
 | Container inventory | Bounded stream and storage inventory for recognized layouts |
-| Stream extraction | Stored bytes and decoded bytes where the compression method is supported |
+| Stream extraction | Stored or decoded entry bytes, plus exact parser-produced binary resources with path/range/SHA-256 revalidation |
 | Modern documents | Partial decoding of document kind, properties, configurations, cached metadata, assembly references, drawing sheets, and drawing-view references |
 | Modern Part geometry | Explicit partial decoding of B-Rep topology, analytic and NURBS carriers, display tessellation, configuration body state, provenance, and loss records |
 | Legacy OLE2/CFB documents | Partial decoding of document kind, internal version, standard and application property sets, selected configuration headers, and DIB or PNG previews |

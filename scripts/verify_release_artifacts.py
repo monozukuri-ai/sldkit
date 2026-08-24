@@ -49,10 +49,12 @@ def _check_names(path: Path, names: list[str]) -> None:
 
 
 def _check_wheel(path: Path) -> None:
+    assert "-cp310-abi3-" in path.name, f"wheel is not Python 3.10+ ABI3: {path}"
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         _check_names(path, names)
         assert any(name.endswith("/METADATA") for name in names), path
+        assert any(name.endswith("/WHEEL") for name in names), path
         assert any(name.endswith("sldkit/py.typed") for name in names), path
         assert any(name.endswith("sldkit/_core.pyi") for name in names), path
         assert any(name.endswith("licenses/LICENSE") for name in names), path
@@ -65,8 +67,13 @@ def _check_wheel(path: Path) -> None:
         ), path
         metadata_name = next(name for name in names if name.endswith("/METADATA"))
         metadata = email.parser.BytesParser().parsebytes(archive.read(metadata_name))
+        wheel_name = next(name for name in names if name.endswith("/WHEEL"))
+        wheel_metadata = email.parser.BytesParser().parsebytes(archive.read(wheel_name))
 
     assert metadata["Requires-Python"] == ">=3.10", path
+    assert any(
+        tag.startswith("cp310-abi3-") for tag in wheel_metadata.get_all("Tag", [])
+    ), (path, wheel_metadata.get_all("Tag", []))
     requirements = {
         value.split(";", 1)[0].strip().split("[", 1)[0].split(" ", 1)[0].lower()
         for value in metadata.get_all("Requires-Dist", [])

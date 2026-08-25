@@ -58,3 +58,20 @@ def test_wheel_smoke_requires_exactly_one_wheel(tmp_path: Path):
     (tmp_path / "second.whl").touch()
     with pytest.raises(ValueError, match="found 2"):
         resolve_wheel(tmp_path)
+
+
+def test_release_versions_and_tag_match():
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
+    versions = namespace["release_versions"](ROOT)
+    version = namespace["verify_release_version"](
+        ROOT, f"v{next(iter(versions.values()))}"
+    )
+
+    assert set(versions.values()) == {version}
+
+
+def test_release_tag_must_match_source_version():
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
+
+    with pytest.raises(ValueError, match="does not match"):
+        namespace["verify_release_version"](ROOT, "v999.0.0")

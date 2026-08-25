@@ -1,0 +1,235 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MATURIN_VERSION: "v1.14.1"
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Verify source versions and tag
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: python scripts/verify_release_version.py --tag "$RELEASE_TAG"
+
+  wheels:
+    name: ${{ matrix.name }} / ABI3 Python 3.10+
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            interpreter: python3.13
+            manylinux: "2_28"
+            artifact: linux-x86_64
+          - name: Windows x86_64
+            runner: windows-latest
+            target: x64
+            interpreter: python
+            manylinux: "off"
+            artifact: windows-x86_64
+          - name: macOS arm64
+            runner: macos-15
+            target: aarch64
+            interpreter: python
+            manylinux: "off"
+            artifact: macos-arm64
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Show runtime identity
+        run: python -c "import platform, sys; print(sys.version); print(platform.platform()); print(platform.machine())"
+      - name: Build wheel
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          args: >-
+            --release --locked --out dist -i ${{ matrix.interpreter }}
+          sccache: true
+      - name: Inspect artifact
+        run: python scripts/verify_release_artifacts.py dist
+      - name: Set up minimum supported Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.10"
+      - name: Isolated install and smoke / Python 3.10
+        run: python scripts/smoke_wheel_artifact.py dist
+      - name: Set up newest supported Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Isolated install and smoke / Python 3.14
+        run: python scripts/smoke_wheel_artifact.py dist
+      - name: Upload wheel
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: sldkit-release-wheel-${{ matrix.artifact }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: sdist round-trip / CPython 3.13
+    needs: validate
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Build sdist
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          command: sdist
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          args: --out dist/sdist
+      - name: Inspect sdist
+        run: python scripts/verify_release_artifacts.py dist/sdist
+      - name: Extract sdist
+        run: |
+          mkdir -p dist/source
+          tar -xzf dist/sdist/sldkit-*.tar.gz --strip-components=1 -C dist/source
+      # Maturin currently keeps workspace-only CLI entries in the sdist lockfile.
+      # Let Cargo remove only packages outside the reduced sdist workspace before
+      # requiring --locked for the actual wheel build (maturin issue #2609).
+      - name: Synchronize reduced workspace lockfile
+        working-directory: dist/source
+        run: cargo metadata --format-version 1 > /dev/null
+      - name: Build wheel from sdist
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          working-directory: dist/source
+          target: x86_64-unknown-linux-gnu
+          manylinux: "2_28"
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          args: --release --locked --out dist -i python3.13
+          sccache: true
+      - name: Inspect and smoke round-trip wheel
+        run: |
+          python scripts/verify_release_artifacts.py \
+            dist/sdist dist/source/dist
+          python scripts/smoke_wheel_artifact.py \
+            dist/source/dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: sldkit-release-sdist
+          path: dist/sdist/*.tar.gz
+          if-no-files-found: error
+
+  bundle:
+    name: Verify publication bundle
+    needs: [wheels, sdist]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Download release artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: sldkit-release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify publication bundle
+        run: |
+          python scripts/verify_release_artifacts.py dist
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("dist")
+          wheels = sorted(root.glob("*.whl"))
+          sdists = sorted(root.glob("*.tar.gz"))
+          if len(wheels) != 3 or len(sdists) != 1:
+              raise SystemExit(
+                  f"expected 3 wheels and 1 sdist, found {len(wheels)} wheels "
+                  f"and {len(sdists)} sdists"
+              )
+          print("publication bundle:", *(path.name for path in wheels + sdists), sep="\n- ")
+          PY
+      - name: Upload verified publication bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: sldkit-publish-bundle
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  github-release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: bundle
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified publication bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: sldkit-publish-bundle
+          path: dist
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum sldkit-* > SHA256SUMS
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* \
+              --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --verify-tag --generate-notes --title "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+  pypi-publish:
+    name: Publish to PyPI
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [bundle, github-release]
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sldkit
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified publication bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: sldkit-publish-bundle
+          path: dist
+      - name: Publish distributions with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: dist
+          verify-metadata: false

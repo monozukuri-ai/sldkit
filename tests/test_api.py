@@ -84,6 +84,29 @@ def part_file() -> bytes:
     return modern_file(xml.encode(), "swXmlContents/Features")
 
 
+def drawing_keywords() -> bytes:
+    return (
+        b'<Keywords><Note id="n1">preserve</Note>'
+        b'<Sheet Type="Sheet" id="s1" Name="Sheet1">'
+        b'<PaperSize Width="1"/><View id="v1" Name="Front" '
+        b'Description="Machined">child.SLDPRT</View>'
+        b'<View id="v1" Name="Right">other.SLDPRT</View></Sheet>'
+        b'<Sheet Type="Sheet Format" id="sf1"/><Sketch id="sk1"/>'
+        b'<View id="global">detached.SLDPRT</View></Keywords>'
+    )
+
+
+def drawing_file() -> bytes:
+    return modern_streams(
+        (
+            ("swXmlContents/KeyWords", drawing_keywords()),
+            ("Contents/Definition", b"def"),
+            ("Contents/DisplayLists", b"display"),
+            ("Contents/VBLists", b"vb"),
+        )
+    )
+
+
 def stored_zip() -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
@@ -206,6 +229,85 @@ def test_geometry_rejects_non_part_document_kind():
     assert result.status is sldkit.GeometryStatus.UNSUPPORTED
     assert result.geometry is None
     assert result.diagnostics[-1].code == "geometry.document_kind_unsupported"
+
+
+def test_drawing_structure_api_is_typed_deterministic_and_matches_native_json():
+    payload = drawing_file()
+
+    result = sldkit.decode_drawing_structure_bytes(
+        payload, filename="fixture.SLDDRW"
+    )
+    repeated = sldkit.decode_drawing_structure_bytes(
+        payload, filename="fixture.SLDDRW"
+    )
+    native = json.loads(
+        _core.decode_drawing_structure_bytes_json(
+            payload, "fixture.SLDDRW", "desktop"
+        )
+    )
+
+    assert result == repeated
+    assert result.status is sldkit.DrawingStructureStatus.PARTIAL
+    assert result.structure is not None
+    assert result.structure.source.input_kind is sldkit.SourceInputKind.BYTES
+    assert result.structure.source.sha256 == hashlib.sha256(payload).hexdigest()
+    assert result.structure.coverage.record_count == 9
+    assert result.structure.coverage.sheet_record_count == 2
+    assert result.structure.coverage.supported_sheet_count == 1
+    assert result.structure.coverage.sheet_view_count == 2
+    assert result.structure.coverage.unassigned_view_record_count == 1
+    assert result.structure.coverage.candidate_stream_count == 3
+    assert result.structure.coverage.candidate_stream_bytes == 12
+    assert (
+        result.structure.coverage.partition_status
+        is sldkit.DrawingBytePartitionStatus.INCOMPLETE
+    )
+    assert result.structure.coverage.typed_bytes is None
+    assert result.structure.coverage.uninterpreted_bytes is None
+    assert len(result.structure.sheets) == 1
+    assert len(result.structure.views) == 2
+    assert (
+        result.structure.views[0].sheet_record_id
+        == result.structure.sheets[0].record_id
+    )
+    assert result.structure.views[0].source_id == result.structure.views[1].source_id
+    assert result.structure.views[0].record_id != result.structure.views[1].record_id
+    assert all(
+        not carrier.record_framing_verified
+        for carrier in result.structure.source_streams
+    )
+    view = next(
+        record
+        for record in result.structure.records
+        if record.record_class is sldkit.DrawingRecordClass.VIEW
+        and record.direct_text == "child.SLDPRT"
+    )
+    raw = drawing_keywords()[
+        view.source.decoded_offset : view.source.decoded_offset
+        + view.source.byte_len
+    ]
+    assert raw.startswith(b"<View") and raw.endswith(b"</View>")
+    assert view.source.sha256 == hashlib.sha256(raw).hexdigest()
+    assert result.to_dict() == native
+
+
+def test_drawing_structure_strict_mode_retains_partial_result():
+    with pytest.raises(sldkit.DrawingStructureError) as caught:
+        sldkit.decode_drawing_structure_bytes(
+            drawing_file(), filename="fixture.SLDDRW", strict=True
+        )
+
+    assert caught.value.result.status is sldkit.DrawingStructureStatus.PARTIAL
+
+
+def test_drawing_structure_rejects_non_drawing_document_kind():
+    result = sldkit.decode_drawing_structure_bytes(
+        part_file(), filename="fixture.SLDPRT"
+    )
+
+    assert result.status is sldkit.DrawingStructureStatus.UNSUPPORTED
+    assert result.structure is None
+    assert result.diagnostics[-1].code == "drawing.structure_document_kind_unsupported"
 
 
 def test_modern_properties_keep_present_empty_missing_and_unsupported_distinct():

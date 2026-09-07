@@ -443,7 +443,7 @@ def case(path: Path, executable: Path, profile: str) -> tuple[dict[str, Any], bo
         and not parameter_errors
         and extraction_valid
         and raw_records_preserved
-        and active_partition_count == 1
+        and active_partition_count >= 1
         and bool(byte_domains)
         and byte_domains_sane
         and byte_coverage_sane
@@ -522,6 +522,12 @@ def main() -> int:
     parser.add_argument("--rust-cli", type=Path, required=True)
     parser.add_argument("--profile", choices=("desktop", "service"), default="service")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--build-profile",
+        choices=("unknown", "debug", "release"),
+        default="unknown",
+        help="Build profile of both the native extension and Rust CLI being measured",
+    )
     parser.add_argument("paths", nargs="+", type=Path)
     args = parser.parse_args()
 
@@ -547,7 +553,8 @@ def main() -> int:
             "python": platform.python_version(),
             "sldkit": sldkit.__version__,
             "rust_cli": args.rust_cli.name,
-            "timing_scope": "validation_only_debug_build",
+            "timing_scope": "validation_only",
+            "build_profile": args.build_profile,
         },
         "performance_ms": {
             "python": distribution(python_times),

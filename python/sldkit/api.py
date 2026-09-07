@@ -7,9 +7,11 @@ from os import PathLike
 from typing import Any
 
 from . import _core
-from .errors import GeometryError, ParseError
+from .errors import DrawingStructureError, GeometryError, ParseError
 from .model import (
     BinaryResource,
+    DrawingStructureResult,
+    DrawingStructureStatus,
     ExtractionMode,
     ExtractionResult,
     GeometryResult,
@@ -200,6 +202,41 @@ def decode_geometry_file(
     return _apply_geometry_strict(GeometryResult.from_dict(payload), strict)
 
 
+def decode_drawing_structure_bytes(
+    data: BytesLike,
+    *,
+    filename: str | None = None,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+) -> DrawingStructureResult:
+    """Inventory source-native records from a modern Drawing."""
+    payload = _load_json(
+        _core.decode_drawing_structure_bytes_json(
+            bytes(data), filename, _profile_name(profile)
+        )
+    )
+    return _apply_drawing_structure_strict(
+        DrawingStructureResult.from_dict(payload), strict
+    )
+
+
+def decode_drawing_structure_file(
+    path: PathType,
+    *,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+) -> DrawingStructureResult:
+    """Inventory Drawing records while retaining exact source ranges and carriers."""
+    payload = _load_json(
+        _core.decode_drawing_structure_file_json(
+            os.fsdecode(os.fspath(path)), _profile_name(profile)
+        )
+    )
+    return _apply_drawing_structure_strict(
+        DrawingStructureResult.from_dict(payload), strict
+    )
+
+
 def scan_project(
     path: PathType,
     *,
@@ -261,4 +298,12 @@ def _apply_strict(result: ParseResult, strict: bool) -> ParseResult:
 def _apply_geometry_strict(result: GeometryResult, strict: bool) -> GeometryResult:
     if strict and result.status is not GeometryStatus.DECODED:
         raise GeometryError(result)
+    return result
+
+
+def _apply_drawing_structure_strict(
+    result: DrawingStructureResult, strict: bool
+) -> DrawingStructureResult:
+    if strict and result.status is not DrawingStructureStatus.INVENTORIED:
+        raise DrawingStructureError(result)
     return result

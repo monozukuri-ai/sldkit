@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/monozukuri-ai/sldkit/docs/schemas/drawing-ground-truth.schema.json",
+  "title": "sldkit M6a SolidWorks Drawing API capture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "captured_at_utc",
+    "capture_tool",
+    "solidworks",
+    "source",
+    "drawing"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "fixture_id": {"type": "string", "minLength": 1},
+    "captured_at_utc": {"type": "string", "format": "date-time"},
+    "capture_tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "powershell_version"],
+      "properties": {
+        "name": {"const": "capture_drawing_ground_truth.ps1"},
+        "version": {"const": 1},
+        "powershell_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "solidworks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision_number",
+        "base_version",
+        "build_number",
+        "hot_fixes",
+        "current_license_type"
+      ],
+      "properties": {
+        "revision_number": {"type": "string", "minLength": 1},
+        "base_version": {"type": "string", "minLength": 1},
+        "build_number": {"type": "string", "minLength": 1},
+        "hot_fixes": {"type": "string"},
+        "current_license_type": {"$ref": "#/$defs/state"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "byte_size",
+        "open_errors",
+        "open_warnings",
+        "saved_license_type"
+      ],
+      "properties": {
+        "path": {"$ref": "#/$defs/drawing_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "byte_size": {"type": "integer", "minimum": 1},
+        "open_errors": {"type": "integer", "minimum": 0},
+        "open_warnings": {"type": "integer", "minimum": 0},
+        "saved_license_type": {"$ref": "#/$defs/state"}
+      }
+    },
+    "drawing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["length_unit", "angle_unit", "sheets"],
+      "properties": {
+        "length_unit": {"const": "meter"},
+        "angle_unit": {"const": "radian"},
+        "sheets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sheet"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "drawing_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^:\\\\]+\\.[sS][lL][dD][dD][rR][wW]$"
+    },
+    "document_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^:\\\\]+\\.([sS][lL][dD][pP][rR][tT]|[sS][lL][dD][aA][sS][mM]|[sS][lL][dD][dD][rR][wW])$"
+    },
+    "document_basename": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/:\\\\]+\\.([sS][lL][dD][pP][rR][tT]|[sS][lL][dD][aA][sS][mM]|[sS][lL][dD][dD][rR][wW])$"
+    },
+    "vector2": {
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}],
+      "items": false
+    },
+    "transform13": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "items": false
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name"],
+      "properties": {
+        "code": {"type": "integer"},
+        "name": {"type": "string", "minLength": 1}
+      }
+    },
+    "persistent_reference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "encoding", "byte_size", "sha256", "value"],
+          "properties": {
+            "status": {"const": "captured"},
+            "encoding": {"const": "base64"},
+            "byte_size": {"type": "integer", "minimum": 1},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "encoding", "byte_size", "sha256", "value"],
+          "properties": {
+            "status": {"const": "unavailable"},
+            "encoding": {"type": "null"},
+            "byte_size": {"type": "null"},
+            "sha256": {"type": "null"},
+            "value": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "reference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stored_basename",
+            "resolved_project_path",
+            "resolution_status"
+          ],
+          "properties": {
+            "stored_basename": {"$ref": "#/$defs/document_basename"},
+            "resolved_project_path": {"$ref": "#/$defs/document_path"},
+            "resolution_status": {"const": "resolved"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stored_basename",
+            "resolved_project_path",
+            "resolution_status"
+          ],
+          "properties": {
+            "stored_basename": {"$ref": "#/$defs/document_basename"},
+            "resolved_project_path": {"type": "null"},
+            "resolution_status": {"enum": ["missing", "ambiguous"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stored_basename",
+            "resolved_project_path",
+            "resolution_status"
+          ],
+          "properties": {
+            "stored_basename": {"type": "null"},
+            "resolved_project_path": {"type": "null"},
+            "resolution_status": {"const": "no_reference"}
+          }
+        }
+      ]
+    },
+    "base_view": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "name", "persistent_reference"],
+          "properties": {
+            "status": {"const": "captured"},
+            "name": {"type": "string", "minLength": 1},
+            "persistent_reference": {"$ref": "#/$defs/persistent_reference"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "name", "persistent_reference"],
+          "properties": {
+            "status": {"enum": ["none", "unavailable"]},
+            "name": {"type": "null"},
+            "persistent_reference": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "sheet_properties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_size_code",
+        "template_code",
+        "scale_ratio",
+        "first_angle_projection",
+        "width_m",
+        "height_m",
+        "same_custom_properties"
+      ],
+      "properties": {
+        "paper_size_code": {"type": "integer"},
+        "template_code": {"type": "integer"},
+        "scale_ratio": {"$ref": "#/$defs/vector2"},
+        "first_angle_projection": {"type": "boolean"},
+        "width_m": {"type": "number", "exclusiveMinimum": 0},
+        "height_m": {"type": "number", "exclusiveMinimum": 0},
+        "same_custom_properties": {"type": "boolean"}
+      }
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "persistent_reference",
+        "view_type",
+        "base_view",
+        "reference",
+        "referenced_configuration",
+        "position_m",
+        "scale_decimal",
+        "scale_ratio",
+        "use_sheet_scale",
+        "use_parent_scale",
+        "angle_rad",
+        "model_to_view_transform"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "persistent_reference": {"$ref": "#/$defs/persistent_reference"},
+        "view_type": {"$ref": "#/$defs/state"},
+        "base_view": {"$ref": "#/$defs/base_view"},
+        "reference": {"$ref": "#/$defs/reference"},
+        "referenced_configuration": {"type": ["string", "null"]},
+        "position_m": {"$ref": "#/$defs/vector2"},
+        "scale_decimal": {"type": "number", "exclusiveMinimum": 0},
+        "scale_ratio": {"$ref": "#/$defs/vector2"},
+        "use_sheet_scale": {"type": "boolean"},
+        "use_parent_scale": {"type": "boolean"},
+        "angle_rad": {"type": "number"},
+        "model_to_view_transform": {"$ref": "#/$defs/transform13"}
+      }
+    },
+    "sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "persistent_reference",
+        "properties",
+        "views"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "persistent_reference": {"$ref": "#/$defs/persistent_reference"},
+        "properties": {"$ref": "#/$defs/sheet_properties"},
+        "views": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/view"}
+        }
+      }
+    }
+  }
+}

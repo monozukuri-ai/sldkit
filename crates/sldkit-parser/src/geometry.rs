@@ -137,6 +137,7 @@ pub(crate) fn decode(
         &inspection,
         active_stream,
         decoded.report().geometry_transferred,
+        &model,
     );
     let raw_records = decoded
         .source_fidelity()
@@ -168,7 +169,7 @@ pub(crate) fn decode(
             entity_id: finding.entity.clone(),
         })
         .collect::<Vec<_>>();
-    let byte_domains = byte_domains(data, &source_streams, limits);
+    let (byte_domains, domain_limit_hit) = byte_domains(data, &source_streams, limits);
     let byte_coverage = byte_coverage(data, &source_streams, &byte_domains, &raw_records, &model);
     let fidelity = GeometryFidelityReport {
         decoder: DECODER_NAME.to_owned(),
@@ -207,6 +208,14 @@ pub(crate) fn decode(
             DiagnosticSeverity::Warning,
             DiagnosticKind::Unsupported,
             "typed geometry was transferred, but its nested Parasolid byte domain could not be established",
+        ));
+    }
+    if domain_limit_hit {
+        diagnostics.push(Diagnostic::new(
+            "geometry.byte_domain_limit",
+            DiagnosticSeverity::Warning,
+            DiagnosticKind::Unsupported,
+            "nested Parasolid discovery reached its shared resource budget; byte domains cover only the recovered subset",
         ));
     }
     if byte_coverage.partition_status == GeometryBytePartitionStatus::Incomplete {
@@ -784,10 +793,20 @@ fn stream_candidates(
     inspection: &InventoryResult,
     active_stream: Option<&str>,
     geometry_transferred: bool,
+    model: &GeometryModel,
 ) -> Vec<GeometryStreamCandidate> {
     let Some(inventory) = inspection.inventory.as_ref() else {
         return Vec::new();
     };
+    let contributing_streams = geometry_source_streams(model);
+    let mut path_counts = BTreeMap::<String, usize>::new();
+    for entry in &inventory.entries {
+        if entry.state == InventoryEntryState::Decoded
+            && let Some(path) = &entry.path
+        {
+            *path_counts.entry(path.to_ascii_lowercase()).or_default() += 1;
+        }
+    }
     let mut candidates = inventory
         .entries
         .iter()
@@ -810,11 +829,19 @@ fn stream_candidates(
             } else {
                 return None;
             };
-            let is_active = active_stream.is_some_and(|active| active.eq_ignore_ascii_case(path));
+            let unique_path = path_counts.get(&lower) == Some(&1);
+            let is_active = unique_path
+                && active_stream.is_some_and(|active| active.eq_ignore_ascii_case(path));
+            let contributes = unique_path && contributing_streams.contains(&lower);
             let (selection, evidence) = if is_active {
                 (
                     GeometryStreamSelection::Active,
                     vec!["decoder.source.active_parasolid_block".to_owned()],
+                )
+            } else if contributes && role != GeometryStreamRole::Tessellation {
+                (
+                    GeometryStreamSelection::Active,
+                    vec!["decoder.entity.provenance_stream".to_owned()],
                 )
             } else if role == GeometryStreamRole::Tessellation {
                 (
@@ -859,6 +886,20 @@ fn stream_candidates(
     candidates
 }
 
+fn geometry_source_streams(model: &GeometryModel) -> BTreeSet<String> {
+    let mut streams = BTreeSet::new();
+    observe_provenances(model, |provenance| {
+        if !matches!(
+            provenance.exactness,
+            GeometryExactness::Derived | GeometryExactness::Inferred
+        ) && let Some(stream) = &provenance.stream
+        {
+            streams.insert(stream.to_ascii_lowercase());
+        }
+    });
+    streams
+}
+
 #[derive(Debug)]
 struct NestedParasolidStream {
     outer_payload_offset: usize,
@@ -870,12 +911,31 @@ struct NestedParasolidStream {
     role: GeometryStreamRole,
 }
 
+struct NestedStreamBudget {
+    probes: u64,
+    streams: u64,
+    bytes: u64,
+    limit_hit: bool,
+}
+
+impl NestedStreamBudget {
+    fn new(limits: &ResourceLimits) -> Self {
+        Self {
+            probes: limits.max_stream_count.min(MAX_NESTED_STREAM_PROBES),
+            streams: limits.max_stream_count,
+            bytes: limits.max_total_uncompressed_bytes,
+            limit_hit: false,
+        }
+    }
+}
+
 fn byte_domains(
     data: &[u8],
     streams: &[GeometryStreamCandidate],
     limits: &ResourceLimits,
-) -> Vec<GeometryByteDomain> {
+) -> (Vec<GeometryByteDomain>, bool) {
     let mut domains = Vec::new();
+    let mut budget = NestedStreamBudget::new(limits);
     for stream in streams.iter().filter(|stream| {
         stream.selection == GeometryStreamSelection::Active
             && matches!(
@@ -888,7 +948,7 @@ fn byte_domains(
         let Some(payload) = extraction.data else {
             continue;
         };
-        for nested in nested_parasolid_streams(&payload, limits) {
+        for nested in nested_parasolid_streams_budgeted(&payload, limits, &mut budget) {
             let body = &nested.bytes[nested.body_offset..];
             let ordinal = domains.len();
             domains.push(GeometryByteDomain {
@@ -909,33 +969,49 @@ fn byte_domains(
             });
         }
     }
-    domains
+    (domains, budget.limit_hit)
 }
 
+#[cfg(test)]
 fn nested_parasolid_streams(payload: &[u8], limits: &ResourceLimits) -> Vec<NestedParasolidStream> {
+    nested_parasolid_streams_budgeted(payload, limits, &mut NestedStreamBudget::new(limits))
+}
+
+fn nested_parasolid_streams_budgeted(
+    payload: &[u8],
+    limits: &ResourceLimits,
+    budget: &mut NestedStreamBudget,
+) -> Vec<NestedParasolidStream> {
     let direct_starts = payload
         .windows(PARASOLID_MAGIC.len())
         .enumerate()
         .filter_map(|(offset, value)| (value == PARASOLID_MAGIC).then_some(offset))
         .filter(|offset| parasolid_header(&payload[*offset..]).is_some())
+        .take(usize::try_from(budget.streams.saturating_add(1)).unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
     if !direct_starts.is_empty() {
-        return direct_starts
-            .iter()
-            .copied()
-            .enumerate()
-            .filter_map(|(index, start)| {
-                let end = direct_starts
-                    .get(index + 1)
-                    .copied()
-                    .unwrap_or(payload.len());
-                nested_parasolid_stream(
-                    start,
-                    GeometryByteStorage::Direct,
-                    payload.get(start..end)?.to_vec(),
-                )
-            })
-            .collect();
+        let mut nested = Vec::new();
+        for (index, start) in direct_starts.iter().copied().enumerate() {
+            let end = direct_starts
+                .get(index + 1)
+                .copied()
+                .unwrap_or(payload.len());
+            let byte_len = saturating_u64(end - start);
+            if budget.streams == 0 || byte_len > budget.bytes {
+                budget.limit_hit = true;
+                break;
+            }
+            budget.streams -= 1;
+            budget.bytes -= byte_len;
+            if let Some(stream) = nested_parasolid_stream(
+                start,
+                GeometryByteStorage::Direct,
+                payload[start..end].to_vec(),
+            ) {
+                nested.push(stream);
+            }
+        }
+        return nested;
     }
 
     if !payload
@@ -946,20 +1022,21 @@ fn nested_parasolid_streams(payload: &[u8], limits: &ResourceLimits) -> Vec<Nest
     }
 
     let mut nested = Vec::new();
-    let mut attempts = 0_u64;
-    let attempt_limit = limits.max_stream_count.min(MAX_NESTED_STREAM_PROBES);
-    let mut remaining_expand_bytes = limits.max_total_uncompressed_bytes;
     for offset in 0..payload.len().saturating_sub(1) {
         if payload[offset] != 0x78 || !matches!(payload[offset + 1], 0x01 | 0x9c | 0xda) {
             continue;
         }
-        if attempts >= attempt_limit || remaining_expand_bytes == 0 {
+        if budget.probes == 0 || budget.bytes == 0 || budget.streams == 0 {
+            budget.limit_hit = true;
             break;
         }
-        attempts = attempts.saturating_add(1);
+        budget.probes -= 1;
         let (inflated, expanded_bytes) =
-            inflate_zlib_bounded(&payload[offset..], limits, remaining_expand_bytes);
-        remaining_expand_bytes = remaining_expand_bytes.saturating_sub(expanded_bytes);
+            inflate_zlib_bounded(&payload[offset..], limits, budget.bytes);
+        if expanded_bytes > budget.bytes {
+            budget.limit_hit = true;
+        }
+        budget.bytes = budget.bytes.saturating_sub(expanded_bytes);
         let Some(bytes) = inflated else {
             continue;
         };
@@ -973,6 +1050,7 @@ fn nested_parasolid_streams(payload: &[u8], limits: &ResourceLimits) -> Vec<Nest
         if let Some(candidate) =
             nested_parasolid_stream(offset, GeometryByteStorage::WrappedZlib, bytes)
         {
+            budget.streams -= 1;
             nested.push(candidate);
         }
     }
@@ -1118,6 +1196,11 @@ fn located_entity_counts(model: &GeometryModel, streams: &[GeometryStreamCandida
             unique.insert((normalized, offset));
         }
     };
+    observe_provenances(model, &mut observe);
+    (located, saturating_len(unique.len()))
+}
+
+fn observe_provenances(model: &GeometryModel, mut observe: impl FnMut(&GeometryEntityProvenance)) {
     for item in &model.bodies {
         observe(&item.provenance);
     }
@@ -1154,7 +1237,6 @@ fn located_entity_counts(model: &GeometryModel, streams: &[GeometryStreamCandida
     for item in &model.tessellations {
         observe(&item.provenance);
     }
-    (located, saturating_len(unique.len()))
 }
 
 fn map_loss(loss: &cadmpeg_ir::LossNote) -> GeometryLoss {
@@ -1426,6 +1508,42 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn nested_resource_budget_is_shared_across_outer_entries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stream = framed_parasolid("partition", &[0x5a; 512]);
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&stream)?;
+        let mut wrapped = WRAPPED_PARASOLID_MAGIC_PREFIX.to_vec();
+        wrapped.extend_from_slice(&encoder.finish()?);
+        for payload in [&stream, &wrapped] {
+            let mut limits = ResourceLimits::service();
+            limits.max_total_uncompressed_bytes = super::saturating_u64(stream.len());
+            let mut budget = super::NestedStreamBudget::new(&limits);
+            assert_eq!(
+                super::nested_parasolid_streams_budgeted(payload, &limits, &mut budget,).len(),
+                1
+            );
+            assert!(!budget.limit_hit);
+            assert!(
+                super::nested_parasolid_streams_budgeted(payload, &limits, &mut budget,).is_empty()
+            );
+            assert!(budget.limit_hit);
+        }
+        let mut limits = ResourceLimits::service();
+        limits.max_stream_count = 1;
+        let mut budget = super::NestedStreamBudget::new(&limits);
+        assert_eq!(
+            super::nested_parasolid_streams_budgeted(&wrapped, &limits, &mut budget,).len(),
+            1
+        );
+        assert!(
+            super::nested_parasolid_streams_budgeted(&wrapped, &limits, &mut budget,).is_empty()
+        );
+        assert!(budget.limit_hit);
+        Ok(())
+    }
+
     fn encoded_cube() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut ir = cadmpeg_ir::examples::unit_cube();
         ir.model.bodies[0].name = None;
@@ -1444,6 +1562,86 @@ mod tests {
             })?
             .write_to(&mut bytes)?;
         Ok(bytes)
+    }
+
+    #[test]
+    fn contributing_partitions_require_unambiguous_source_provenance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use sldkit_core::{
+            GeometryEntityProvenance, GeometryExactness, GeometryModel, GeometryPoint,
+        };
+
+        let bytes = encoded_cube()?;
+        let mut inspection = crate::inspect_bytes(&bytes, None, &ResourceLimits::service());
+        let inventory = inspection.inventory.as_mut().ok_or("inventory missing")?;
+        let template = inventory
+            .entries
+            .iter()
+            .find(|entry| {
+                entry
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| path.contains("Partition"))
+            })
+            .ok_or("partition missing")?
+            .clone();
+        inventory.entries.clear();
+        let mut model = GeometryModel::default();
+        for (index, exactness) in [
+            GeometryExactness::ByteExact,
+            GeometryExactness::Unknown,
+            GeometryExactness::Derived,
+            GeometryExactness::Inferred,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = format!("Contents/Config-{index}-Partition");
+            let mut entry = template.clone();
+            entry.id = format!("entry:{index}");
+            entry.path = Some(path.clone());
+            inventory.entries.push(entry);
+            model.points.push(GeometryPoint {
+                id: format!("point:{index}"),
+                position: [0.0; 3],
+                source_object: None,
+                provenance: GeometryEntityProvenance {
+                    stream: Some(path.to_ascii_uppercase()),
+                    offset: Some(10),
+                    tag: None,
+                    exactness,
+                    field_exactness: BTreeMap::new(),
+                },
+            });
+        }
+        let candidates = super::stream_candidates(&inspection, None, true, &model);
+        assert_eq!(
+            candidates.iter().map(|c| c.selection).collect::<Vec<_>>(),
+            vec![
+                GeometryStreamSelection::Active,
+                GeometryStreamSelection::Active,
+                GeometryStreamSelection::Alternate,
+                GeometryStreamSelection::Alternate,
+            ]
+        );
+        assert_eq!(super::located_entity_counts(&model, &candidates), (2, 2));
+
+        // A path alone cannot choose between two inventory identities, even
+        // when the backend also nominates it as its active stream.
+        let inventory = inspection.inventory.as_mut().ok_or("inventory missing")?;
+        let mut duplicate = inventory.entries[0].clone();
+        duplicate.id = "duplicate".into();
+        inventory.entries.push(duplicate);
+        let candidates = super::stream_candidates(
+            &inspection,
+            Some("Contents/Config-0-Partition"),
+            true,
+            &model,
+        );
+        assert_eq!(candidates[0].selection, GeometryStreamSelection::Alternate);
+        assert_eq!(candidates[4].selection, GeometryStreamSelection::Alternate);
+        assert_eq!(candidates[1].selection, GeometryStreamSelection::Active);
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]

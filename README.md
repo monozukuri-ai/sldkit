@@ -13,6 +13,7 @@ as a typed Python package through PyO3.
 | Exact binary-resource extraction | Revalidates parser-produced path, decoded range, and SHA-256 before returning preview bytes |
 | Modern metadata, properties, configurations, and references | Partial, source-faithful profile |
 | Modern `.SLDPRT` B-Rep and tessellation | Explicit partial profile with provenance and loss records |
+| Modern `.SLDDRW` source structure | Exact XML record inventory plus unframed Drawing carrier candidates; no render semantics |
 | Directory project graph | Bounded and deterministic for decoded references |
 | Legacy OLE2/CFB metadata, properties, configurations, and previews | Partial, bounded profile for observed layouts |
 | ZIP/OPC document semantics | Unsupported |
@@ -64,6 +65,13 @@ if geometry.geometry is not None:
     for loss in geometry.geometry.fidelity.losses:
         print(loss.code, loss.category, loss.severity)
 
+drawing = sldkit.decode_drawing_structure_file("drawing.SLDDRW")
+if drawing.structure is not None:
+    for record in drawing.structure.records:
+        print(record.id, record.record_class, record.source.decoded_offset)
+    for carrier in drawing.structure.source_streams:
+        print(carrier.stream_path, carrier.record_framing_verified)
+
 graph = sldkit.scan_project(
     "project/top.SLDASM",
     project_root="project",
@@ -76,6 +84,9 @@ for edge in graph.edges:
 Use `strict=True` with `parse_file` or `parse_bytes` when an unsupported or
 partial result must raise `sldkit.ParseError`. Geometry decoding has the same
 option and raises `sldkit.GeometryError` unless its status is `decoded`.
+Drawing structure inventory raises `sldkit.DrawingStructureError` in strict
+mode unless its status is `inventoried`; a `partial` result retains all located
+records and exact candidate-stream identities.
 
 If no configuration is selected, the graph is the union of all decoded source
 configurations. Configuration names are matched exactly. Suppressed references
@@ -87,6 +98,9 @@ when sharing compatibility results:
 ```bash
 sldkit scan project/top.SLDASM --project-root project --summary
 sldkit-rs scan project/top.SLDASM --project-root project --summary
+sldkit drawing drawing.SLDDRW --limits service
+sldkit-rs drawing drawing.SLDDRW --limits service
+uv run python scripts/compare_drawing_structures.py baseline.SLDDRW variant.SLDDRW
 ```
 
 Windows absolute paths are never opened as host paths on Linux or macOS. An
@@ -99,6 +113,8 @@ labeled and never selects among multiple candidates.
 `sldkit` owns SolidWorks-specific parsing and source models. It does not depend
 on `cad3d-ir`, CadQuery, Open CASCADE, a vendor SDK, COM, or a viewer. A separate
 adapter can depend on both `sldkit` and a downstream interchange model.
+The source distribution's optional SolidWorks capture script is controlled
+validation tooling; it is not imported by the package or included in wheels.
 
 ## Development
 

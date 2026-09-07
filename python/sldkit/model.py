@@ -203,6 +203,39 @@ class LimitProfile(_StringEnum):
     SERVICE = "service"
 
 
+class DrawingStructureStatus(_StringEnum):
+    INVENTORIED = "inventoried"
+    PARTIAL = "partial"
+    UNSUPPORTED = "unsupported"
+    MALFORMED = "malformed"
+    REJECTED = "rejected"
+
+
+class DrawingRecordClass(_StringEnum):
+    ROOT = "root"
+    ATTRIBUTE = "attribute"
+    FEATURE = "feature"
+    LAYER = "layer"
+    NOTE = "note"
+    REFERENCE = "reference"
+    SHEET = "sheet"
+    VIEW = "view"
+    SKETCH = "sketch"
+    FIELD = "field"
+    OTHER = "other"
+
+
+class DrawingCarrierRole(_StringEnum):
+    DEFINITION_CANDIDATE = "definition_candidate"
+    DISPLAY_LISTS_CANDIDATE = "display_lists_candidate"
+    VB_LISTS_CANDIDATE = "vb_lists_candidate"
+
+
+class DrawingBytePartitionStatus(_StringEnum):
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+
+
 class GeometryStatus(_StringEnum):
     DECODED = "decoded"
     PARTIAL = "partial"
@@ -931,6 +964,308 @@ class DrawingSheet:
             "name": _sourced_dict(self.name),
             "preview": None if self.preview is None else self.preview.to_dict(),
             "views": [item.to_dict() for item in self.views],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingRecordSource:
+    entry_id: str
+    stream_path: str
+    decoded_offset: int
+    byte_len: int
+    sha256: str
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingRecordSource:
+        return cls(
+            entry_id=str(value["entry_id"]),
+            stream_path=str(value["stream_path"]),
+            decoded_offset=int(value["decoded_offset"]),
+            byte_len=int(value["byte_len"]),
+            sha256=str(value["sha256"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entry_id": self.entry_id,
+            "stream_path": self.stream_path,
+            "decoded_offset": self.decoded_offset,
+            "byte_len": self.byte_len,
+            "sha256": self.sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingRecord:
+    id: str
+    record_class: DrawingRecordClass
+    source_tag: str
+    parent_id: str | None
+    source_id: str | None
+    name: str | None
+    source_type: str | None
+    source_attributes: Mapping[str, str]
+    direct_text: str | None
+    source: DrawingRecordSource
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingRecord:
+        return cls(
+            id=str(value["id"]),
+            record_class=DrawingRecordClass(value["class"]),
+            source_tag=str(value["source_tag"]),
+            parent_id=_optional_str(value.get("parent_id")),
+            source_id=_optional_str(value.get("source_id")),
+            name=_optional_str(value.get("name")),
+            source_type=_optional_str(value.get("source_type")),
+            source_attributes={
+                str(name): str(item)
+                for name, item in value.get("source_attributes", {}).items()
+            },
+            direct_text=_optional_str(value.get("direct_text")),
+            source=DrawingRecordSource.from_dict(value["source"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "class": self.record_class.value,
+            "source_tag": self.source_tag,
+            "parent_id": self.parent_id,
+            "source_id": self.source_id,
+            "name": self.name,
+            "source_type": self.source_type,
+            "direct_text": self.direct_text,
+            "source": self.source.to_dict(),
+        }
+        if self.source_attributes:
+            result["source_attributes"] = dict(self.source_attributes)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingStructureSheet:
+    record_id: str
+    source_id: str | None
+    name: str | None
+    source_type: str | None
+    view_record_ids: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingStructureSheet:
+        return cls(
+            record_id=str(value["record_id"]),
+            source_id=_optional_str(value.get("source_id")),
+            name=_optional_str(value.get("name")),
+            source_type=_optional_str(value.get("source_type")),
+            view_record_ids=tuple(
+                str(item) for item in value.get("view_record_ids", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_id": self.record_id,
+            "source_id": self.source_id,
+            "name": self.name,
+            "source_type": self.source_type,
+            "view_record_ids": list(self.view_record_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingStructureView:
+    record_id: str
+    sheet_record_id: str | None
+    source_id: str | None
+    name: str | None
+    referenced_document: str | None
+    referenced_configuration: str | None
+    parent_view_record_id: str | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingStructureView:
+        return cls(
+            record_id=str(value["record_id"]),
+            sheet_record_id=_optional_str(value.get("sheet_record_id")),
+            source_id=_optional_str(value.get("source_id")),
+            name=_optional_str(value.get("name")),
+            referenced_document=_optional_str(value.get("referenced_document")),
+            referenced_configuration=_optional_str(
+                value.get("referenced_configuration")
+            ),
+            parent_view_record_id=_optional_str(value.get("parent_view_record_id")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_id": self.record_id,
+            "sheet_record_id": self.sheet_record_id,
+            "source_id": self.source_id,
+            "name": self.name,
+            "referenced_document": self.referenced_document,
+            "referenced_configuration": self.referenced_configuration,
+            "parent_view_record_id": self.parent_view_record_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingCarrier:
+    entry_id: str
+    stream_path: str
+    role: DrawingCarrierRole
+    decoded_size: int
+    decoded_sha256: str
+    record_framing_verified: bool
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingCarrier:
+        return cls(
+            entry_id=str(value["entry_id"]),
+            stream_path=str(value["stream_path"]),
+            role=DrawingCarrierRole(value["role"]),
+            decoded_size=int(value["decoded_size"]),
+            decoded_sha256=str(value["decoded_sha256"]),
+            record_framing_verified=bool(value["record_framing_verified"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entry_id": self.entry_id,
+            "stream_path": self.stream_path,
+            "role": self.role.value,
+            "decoded_size": self.decoded_size,
+            "decoded_sha256": self.decoded_sha256,
+            "record_framing_verified": self.record_framing_verified,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingStructureCoverage:
+    record_count: int
+    record_class_counts: Mapping[str, int]
+    sheet_record_count: int
+    supported_sheet_count: int
+    sheet_view_count: int
+    unassigned_view_record_count: int
+    candidate_stream_count: int
+    candidate_stream_bytes: int
+    located_record_count: int
+    unique_record_range_count: int
+    partition_status: DrawingBytePartitionStatus
+    typed_bytes: int | None
+    uninterpreted_bytes: int | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingStructureCoverage:
+        return cls(
+            record_count=int(value["record_count"]),
+            record_class_counts={
+                str(name): int(item)
+                for name, item in value.get("record_class_counts", {}).items()
+            },
+            sheet_record_count=int(value["sheet_record_count"]),
+            supported_sheet_count=int(value["supported_sheet_count"]),
+            sheet_view_count=int(value["sheet_view_count"]),
+            unassigned_view_record_count=int(value["unassigned_view_record_count"]),
+            candidate_stream_count=int(value["candidate_stream_count"]),
+            candidate_stream_bytes=int(value["candidate_stream_bytes"]),
+            located_record_count=int(value["located_record_count"]),
+            unique_record_range_count=int(value["unique_record_range_count"]),
+            partition_status=DrawingBytePartitionStatus(value["partition_status"]),
+            typed_bytes=_optional_int(value.get("typed_bytes")),
+            uninterpreted_bytes=_optional_int(value.get("uninterpreted_bytes")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_count": self.record_count,
+            "record_class_counts": dict(self.record_class_counts),
+            "sheet_record_count": self.sheet_record_count,
+            "supported_sheet_count": self.supported_sheet_count,
+            "sheet_view_count": self.sheet_view_count,
+            "unassigned_view_record_count": self.unassigned_view_record_count,
+            "candidate_stream_count": self.candidate_stream_count,
+            "candidate_stream_bytes": self.candidate_stream_bytes,
+            "located_record_count": self.located_record_count,
+            "unique_record_range_count": self.unique_record_range_count,
+            "partition_status": self.partition_status.value,
+            "typed_bytes": self.typed_bytes,
+            "uninterpreted_bytes": self.uninterpreted_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingStructureDocument:
+    source: SourceInfo
+    internal_version: SourcedValue[int] | None
+    records: tuple[DrawingRecord, ...]
+    sheets: tuple[DrawingStructureSheet, ...]
+    views: tuple[DrawingStructureView, ...]
+    source_streams: tuple[DrawingCarrier, ...]
+    coverage: DrawingStructureCoverage
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingStructureDocument:
+        return cls(
+            source=SourceInfo.from_dict(value["source"]),
+            internal_version=_optional_sourced(value.get("internal_version"), int),
+            records=tuple(
+                DrawingRecord.from_dict(item) for item in value.get("records", [])
+            ),
+            sheets=tuple(
+                DrawingStructureSheet.from_dict(item)
+                for item in value.get("sheets", [])
+            ),
+            views=tuple(
+                DrawingStructureView.from_dict(item)
+                for item in value.get("views", [])
+            ),
+            source_streams=tuple(
+                DrawingCarrier.from_dict(item)
+                for item in value.get("source_streams", [])
+            ),
+            coverage=DrawingStructureCoverage.from_dict(value["coverage"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source.to_dict(),
+            "internal_version": _sourced_dict(self.internal_version),
+            "records": [item.to_dict() for item in self.records],
+            "sheets": [item.to_dict() for item in self.sheets],
+            "views": [item.to_dict() for item in self.views],
+            "source_streams": [item.to_dict() for item in self.source_streams],
+            "coverage": self.coverage.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DrawingStructureResult:
+    status: DrawingStructureStatus
+    structure: DrawingStructureDocument | None
+    diagnostics: tuple[Diagnostic, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingStructureResult:
+        structure = value.get("structure")
+        return cls(
+            status=DrawingStructureStatus(value["status"]),
+            structure=(
+                None
+                if structure is None
+                else DrawingStructureDocument.from_dict(structure)
+            ),
+            diagnostics=tuple(
+                Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "structure": None if self.structure is None else self.structure.to_dict(),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
         }
 
 

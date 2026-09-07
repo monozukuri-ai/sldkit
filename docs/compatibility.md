@@ -13,14 +13,20 @@ parsed.
 | Stream extraction | Stored or decoded entry bytes, plus exact parser-produced binary resources with path/range/SHA-256 revalidation |
 | Modern documents | Partial decoding of document kind, properties, configurations, cached metadata, assembly references, drawing sheets, and drawing-view references |
 | Modern Part geometry | Explicit partial decoding of B-Rep topology, analytic and NURBS carriers, display tessellation, configuration body state, provenance, and loss records |
+| Modern Drawing structure | Deterministic inventory of `KeyWords` XML elements with exact decoded ranges, hierarchy, parsed source fields, direct sheet/view membership, and exact unframed carrier identities |
 | Legacy OLE2/CFB documents | Partial decoding of document kind, internal version, standard and application property sets, selected configuration headers, and DIB or PNG previews |
 | Project scanning | Bounded dependency graph for decoded Part, Assembly, and Drawing references |
 | Python API | Typed models corresponding to the Rust JSON contract |
-| Command-line interface | Probe, inspect, extract, parse, geometry, and project scan operations |
+| Command-line interface | Probe, inspect, extract, parse, geometry, Drawing structure, and project scan operations |
 
 Modern parsing is limited to observed layouts. Internal version values are
 evidence attached to an input, not a promise that every file from a product year
 or every intermediate version is supported.
+
+The controlled Drawing capture and differential scripts are validation tools,
+not runtime format support. Their output can establish external fixture facts;
+it does not make dimensions, view transforms, or candidate binary streams
+decoded capabilities.
 
 Legacy property-set and preview decoding is container- and specification-based.
 Configuration-header decoding is currently limited to the observed internal
@@ -37,7 +43,7 @@ partially parsed SolidWorks document.
 - Legacy, Assembly, and Drawing B-Rep or tessellation geometry
 - Feature-history reconstruction
 - Mate semantics and component occurrence transforms
-- Drawing entities, dimensions, annotations, and view transforms
+- Renderable Drawing entities, dimensions, annotations, projection, and view transforms
 - Native file writing or round-trip editing
 
 Unsupported content remains visible through diagnostics, inventory entries,
@@ -54,6 +60,12 @@ remains.
 contain useful B-Rep and tessellation while the fidelity report identifies
 derived topology, unresolved ownership, untyped carriers, or incomplete byte
 partitioning.
+
+`DrawingStructureStatus` independently describes modern Drawing record
+inventory. `partial` can contain exact XML record ranges and carrier hashes
+while binary record framing, typed fields, and exclusive byte partitioning
+remain unverified. Stable inventory IDs are not persistent references across a
+modified save.
 
 `ProjectScanStatus` describes reference resolution for a project. `complete`
 means every decoded reference required by the selected traversal was resolved

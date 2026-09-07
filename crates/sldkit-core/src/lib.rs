@@ -1,6 +1,7 @@
 //! Public contracts shared by the `SolidWorks` parser layers.
 
 mod diagnostic;
+mod drawing;
 mod geometry;
 mod inventory;
 mod limits;
@@ -9,6 +10,11 @@ mod project;
 mod result;
 
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSeverity};
+pub use drawing::{
+    DrawingBytePartitionStatus, DrawingCarrier, DrawingCarrierRole, DrawingRecord,
+    DrawingRecordClass, DrawingRecordSource, DrawingStructureCoverage, DrawingStructureDocument,
+    DrawingStructureResult, DrawingStructureSheet, DrawingStructureStatus, DrawingStructureView,
+};
 pub use geometry::{
     GeometryBody, GeometryByteCoverage, GeometryByteDomain, GeometryByteOffsetBasis,
     GeometryBytePartitionStatus, GeometryByteStorage, GeometryCarrier, GeometryCarrierDomain,

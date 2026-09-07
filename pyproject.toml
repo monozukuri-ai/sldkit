@@ -53,6 +53,8 @@ module-name = "sldkit._core"
 bindings = "pyo3"
 include = [
     { path = "docs/**/*", format = "sdist" },
+    { path = "scripts/capture_drawing_ground_truth.ps1", format = "sdist" },
+    { path = "scripts/compare_drawing_structures.py", format = "sdist" },
 ]
 exclude = [
     "reference/**",

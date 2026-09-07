@@ -72,6 +72,23 @@ def test_geometry_cli_accepts_explicit_partial_result(tmp_path, capsys):
     assert output["geometry"]["model"]["bodies"] == []
 
 
+def test_drawing_cli_accepts_explicit_partial_result(tmp_path, capsys):
+    path = tmp_path / "drawing.SLDDRW"
+    keywords = (
+        b'<Keywords><Sheet Type="Sheet" id="s1" Name="Sheet1">'
+        b'<View id="v1">part.SLDPRT</View></Sheet></Keywords>'
+    )
+    path.write_bytes(modern_file(keywords, b"swXmlContents/KeyWords"))
+
+    exit_code = main(["drawing", str(path)])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["status"] == "partial"
+    assert output["structure"]["coverage"]["record_count"] == 3
+    assert output["structure"]["coverage"]["supported_sheet_count"] == 1
+
+
 def test_inspect_and_extract_cli_use_inventory_entry_id(tmp_path, capsys):
     path = tmp_path / "part.SLDPRT"
     output_path = tmp_path / "payload.bin"

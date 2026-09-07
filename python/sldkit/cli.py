@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .api import (
+    decode_drawing_structure_file,
     decode_geometry_file,
     extract_file,
     inspect_file,
@@ -14,6 +15,7 @@ from .api import (
     scan_project,
 )
 from .model import (
+    DrawingStructureStatus,
     ExtractionStatus,
     GeometryStatus,
     InventoryStatus,
@@ -28,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="sldkit", description="Inspect and decode supported SolidWorks source data"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for name in ("probe", "inspect", "parse", "geometry"):
+    for name in ("probe", "inspect", "parse", "geometry", "drawing"):
         command = subparsers.add_parser(name)
         command.add_argument("path")
         command.add_argument(
@@ -125,6 +127,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.status in {GeometryStatus.DECODED, GeometryStatus.PARTIAL}:
             return 0
         return 1 if result.status is GeometryStatus.UNSUPPORTED else 2
+
+    if args.command == "drawing":
+        result = decode_drawing_structure_file(args.path, profile=args.limits)
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        if result.status in {
+            DrawingStructureStatus.INVENTORIED,
+            DrawingStructureStatus.PARTIAL,
+        }:
+            return 0
+        return 1 if result.status is DrawingStructureStatus.UNSUPPORTED else 2
 
     result = parse_file(args.path, profile=args.limits)
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))

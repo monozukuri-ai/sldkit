@@ -65,6 +65,11 @@ def _check_wheel(path: Path) -> None:
             "sldkit/_core" in name and name.endswith((".so", ".pyd", ".dylib"))
             for name in names
         ), path
+        assert not any(
+            name.endswith("scripts/capture_drawing_ground_truth.ps1")
+            or name.endswith("scripts/compare_drawing_structures.py")
+            for name in names
+        ), path
         metadata_name = next(name for name in names if name.endswith("/METADATA"))
         metadata = email.parser.BytesParser().parsebytes(archive.read(metadata_name))
         wheel_name = next(name for name in names if name.endswith("/WHEEL"))
@@ -93,9 +98,14 @@ def _check_sdist(path: Path) -> None:
     assert "docs/architecture.md" in normalized, path
     assert "docs/compatibility.md" in normalized, path
     assert "docs/geometry.md" in normalized, path
+    assert "docs/drawing-structure.md" in normalized, path
+    assert "docs/drawing-validation.md" in normalized, path
+    assert "docs/schemas/drawing-ground-truth.schema.json" in normalized, path
     assert "docs/schemas/geometry-oracle.schema.json" in normalized, path
     assert "docs/project-scanning.md" in normalized, path
     assert "docs/parser-provenance.md" in normalized, path
+    assert "scripts/capture_drawing_ground_truth.ps1" in normalized, path
+    assert "scripts/compare_drawing_structures.py" in normalized, path
     assert "LICENSE" in normalized, path
     assert "LICENSES/Apache-2.0.txt" in normalized, path
     assert "LICENSES/README.md" in normalized, path

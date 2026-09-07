@@ -1,5 +1,6 @@
 //! High-level path and byte entry points for `SolidWorks` parsing.
 
+mod drawing;
 mod geometry;
 mod legacy_semantics;
 mod modern_semantics;
@@ -20,10 +21,10 @@ use sldkit_container::{
 };
 use sldkit_core::{
     BinaryResource, CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind,
-    Envelope, ExtractionMode, ExtractionResult, ExtractionStatus, GeometryResult, GeometryStatus,
-    InventoryResult, InventoryStatus, ParseResult, ParseStatus, ProbeConfidence, ProbeResult,
-    ProbeStatus, ResourceLimits, SourceDocument, SourceInfo, SourceInputKind, SourceValue,
-    StreamExtraction, ValueOrigin,
+    DrawingStructureResult, DrawingStructureStatus, Envelope, ExtractionMode, ExtractionResult,
+    ExtractionStatus, GeometryResult, GeometryStatus, InventoryResult, InventoryStatus,
+    ParseResult, ParseStatus, ProbeConfidence, ProbeResult, ProbeStatus, ResourceLimits,
+    SourceDocument, SourceInfo, SourceInputKind, SourceValue, StreamExtraction, ValueOrigin,
 };
 
 /// Probe bytes without relying on a filename extension.
@@ -260,6 +261,34 @@ pub fn decode_geometry_path(path: impl AsRef<Path>, limits: &ResourceLimits) -> 
         Err(failure) => GeometryResult {
             status: GeometryStatus::Rejected,
             geometry: None,
+            diagnostics: vec![failure.diagnostic],
+        },
+    }
+}
+
+/// Inventory modern Drawing source records without assigning renderable semantics.
+#[must_use]
+pub fn decode_drawing_structure_bytes(
+    data: &[u8],
+    filename: Option<&str>,
+    limits: &ResourceLimits,
+) -> DrawingStructureResult {
+    drawing::decode(data, filename, SourceInputKind::Bytes, limits)
+}
+
+/// Read a bounded path and inventory its modern Drawing source records.
+#[must_use]
+pub fn decode_drawing_structure_path(
+    path: impl AsRef<Path>,
+    limits: &ResourceLimits,
+) -> DrawingStructureResult {
+    let path = path.as_ref();
+    let label = path.to_string_lossy().into_owned();
+    match read_path_bounded(path, limits) {
+        Ok(data) => drawing::decode(&data, Some(&label), SourceInputKind::Path, limits),
+        Err(failure) => DrawingStructureResult {
+            status: DrawingStructureStatus::Rejected,
+            structure: None,
             diagnostics: vec![failure.diagnostic],
         },
     }
@@ -719,19 +748,27 @@ const fn empty_coverage(total_bytes: u64) -> CoverageReport {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Write};
+    use std::{
+        collections::BTreeSet,
+        io::{Cursor, Write},
+    };
 
     use cfb::Version;
     use crc32fast::Hasher as Crc32;
     use flate2::{Compression, write::DeflateEncoder};
     use sldkit_core::{
-        BinaryResource, BinaryResourceKind, DiagnosticKind, DocumentKind, Envelope,
-        ExtractionStatus, ParseStatus, PropertyKind, PropertyValueState, ReferenceKind,
-        ResourceLimits, SourceInputKind, ValueOrigin,
+        BinaryResource, BinaryResourceKind, DiagnosticKind, DocumentKind,
+        DrawingBytePartitionStatus, DrawingCarrier, DrawingCarrierRole, DrawingRecord,
+        DrawingRecordClass, DrawingStructureStatus, Envelope, ExtractionMode, ExtractionStatus,
+        ParseStatus, PropertyKind, PropertyValueState, ReferenceKind, ResourceLimits,
+        SourceInputKind, ValueOrigin,
     };
     use tempfile::NamedTempFile;
 
-    use super::{extract_resource_bytes, inspect_bytes, parse_bytes, parse_path, sha256_hex};
+    use super::{
+        decode_drawing_structure_bytes, extract_bytes, extract_resource_bytes, inspect_bytes,
+        parse_bytes, parse_path, sha256_hex,
+    };
 
     const EMPTY_ZIP: &[u8] =
         b"PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
@@ -999,6 +1036,57 @@ mod tests {
             extraction.result.sha256.as_deref(),
             Some(resource.sha256.as_str())
         );
+    }
+
+    fn assert_drawing_record_extracts(
+        input: &[u8],
+        record: &DrawingRecord,
+        limits: &ResourceLimits,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let decoded = extract_bytes(
+            input,
+            &record.source.entry_id,
+            ExtractionMode::Decoded,
+            limits,
+        )
+        .data
+        .ok_or("decoded keyword stream missing")?;
+        let start = usize::try_from(record.source.decoded_offset)?;
+        let end = start.saturating_add(usize::try_from(record.source.byte_len)?);
+        let raw_record = decoded.get(start..end).ok_or("record range invalid")?;
+        assert!(raw_record.starts_with(b"<View"));
+        assert!(raw_record.ends_with(b"</View>"));
+        assert_eq!(record.source.sha256, sha256_hex(raw_record));
+        Ok(())
+    }
+
+    fn assert_drawing_carriers_extract(
+        input: &[u8],
+        carriers: &[DrawingCarrier],
+        limits: &ResourceLimits,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for carrier in carriers {
+            let decoded = extract_bytes(input, &carrier.entry_id, ExtractionMode::Decoded, limits)
+                .data
+                .ok_or("decoded Drawing carrier missing")?;
+            assert_eq!(u64::try_from(decoded.len())?, carrier.decoded_size);
+            assert_eq!(sha256_hex(&decoded), carrier.decoded_sha256);
+        }
+        Ok(())
+    }
+
+    fn assert_drawing_hierarchy(records: &[DrawingRecord]) {
+        let ids = records
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), records.len());
+        assert!(records.iter().all(|record| {
+            record
+                .parent_id
+                .as_deref()
+                .is_none_or(|parent_id| ids.contains(parent_id))
+        }));
     }
 
     #[test]
@@ -1421,6 +1509,108 @@ mod tests {
         assert_eq!(
             drawing_document.references[0].kind,
             ReferenceKind::DrawingView
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn drawing_structure_inventory_is_deterministic_and_byte_exact()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let keywords = br#"<Keywords><Note id="n1">preserve</Note><Sheet Type="Sheet" id="s1" Name="Sheet1"><PaperSize Width="1"/><Scale Numerator="1"/><View id="v1" Name="Front" Description="Machined">child.SLDPRT</View><View id="v1" Name="Right">other.SLDPRT</View></Sheet><Sheet Type="Sheet Format" id="sf1"/><Sketch id="sk1"/><View id="global">detached.SLDPRT</View></Keywords>"#;
+        let input = modern_file(&[
+            ("swXmlContents/KeyWords", keywords),
+            ("Contents/Definition", b"def"),
+            ("Contents/DisplayLists", b"display"),
+            ("Contents/VBLists", b"vb"),
+        ])?;
+        let limits = ResourceLimits::desktop();
+
+        let first = decode_drawing_structure_bytes(&input, Some("fixture.SLDDRW"), &limits);
+        let second = decode_drawing_structure_bytes(&input, Some("fixture.SLDDRW"), &limits);
+
+        assert_eq!(first, second);
+        assert_eq!(first.status, DrawingStructureStatus::Partial);
+        let structure = first.structure.as_ref().ok_or("structure missing")?;
+        assert_eq!(structure.coverage.record_count, 10);
+        assert_eq!(structure.coverage.sheet_record_count, 2);
+        assert_eq!(structure.coverage.supported_sheet_count, 1);
+        assert_eq!(structure.coverage.sheet_view_count, 2);
+        assert_eq!(structure.coverage.unassigned_view_record_count, 1);
+        assert_eq!(structure.coverage.candidate_stream_count, 3);
+        assert_eq!(structure.coverage.candidate_stream_bytes, 12);
+        assert_eq!(structure.coverage.located_record_count, 10);
+        assert_eq!(structure.coverage.unique_record_range_count, 10);
+        assert_eq!(
+            structure.coverage.partition_status,
+            DrawingBytePartitionStatus::Incomplete
+        );
+        assert_eq!(structure.coverage.typed_bytes, None);
+        assert_eq!(structure.coverage.uninterpreted_bytes, None);
+        assert_eq!(structure.sheets.len(), 1);
+        assert_eq!(structure.sheets[0].view_record_ids.len(), 2);
+        assert_eq!(structure.views.len(), 2);
+        assert_eq!(
+            structure.views[0].sheet_record_id.as_deref(),
+            Some(structure.sheets[0].record_id.as_str())
+        );
+        assert_eq!(
+            structure.views[0].referenced_document.as_deref(),
+            Some("child.SLDPRT")
+        );
+        assert_eq!(
+            structure.views[0].referenced_configuration.as_deref(),
+            Some("Machined")
+        );
+        assert_eq!(structure.views[0].source_id, structure.views[1].source_id);
+        assert_ne!(structure.views[0].record_id, structure.views[1].record_id);
+        assert_drawing_hierarchy(&structure.records);
+        assert!(
+            structure
+                .source_streams
+                .iter()
+                .all(|stream| !stream.record_framing_verified)
+        );
+        assert_eq!(
+            structure
+                .source_streams
+                .iter()
+                .map(|stream| stream.role)
+                .collect::<Vec<_>>(),
+            vec![
+                DrawingCarrierRole::DefinitionCandidate,
+                DrawingCarrierRole::DisplayListsCandidate,
+                DrawingCarrierRole::VbListsCandidate,
+            ]
+        );
+        assert_drawing_carriers_extract(&input, &structure.source_streams, &limits)?;
+
+        let view_record = structure
+            .records
+            .iter()
+            .find(|record| {
+                record.class == DrawingRecordClass::View
+                    && record.direct_text.as_deref() == Some("child.SLDPRT")
+            })
+            .ok_or("view record missing")?;
+        assert_eq!(
+            view_record
+                .source_attributes
+                .get("Description")
+                .map(String::as_str),
+            Some("Machined")
+        );
+        assert_eq!(view_record.parent_id, structure.views[0].sheet_record_id);
+        assert_drawing_record_extracts(&input, view_record, &limits)?;
+        assert!(
+            first.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "drawing.carrier_record_framing_unverified"
+            })
+        );
+        assert!(
+            first
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "drawing.byte_partition_incomplete")
         );
         Ok(())
     }

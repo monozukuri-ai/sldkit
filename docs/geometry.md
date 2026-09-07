@@ -47,6 +47,11 @@ The geometry model keeps explicit topology ownership from body through vertex:
 - edges identify their curve and endpoint vertices; and
 - vertices identify source points.
 
+A body with `provenance.tag == "synthetic_grouping"` and derived exactness
+is a decoder grouping. Its count and kind do not establish the number or
+solid/sheet classification of native bodies. Inspect provenance and losses
+before using body counts or Euler values as solid-validity checks.
+
 Surface, curve, and pcurve carriers have a domain, a source carrier kind, a
 tagged parameter object, and entity provenance. Analytic carriers and NURBS are
 returned without tessellating them into a replacement shape. Procedural
@@ -74,6 +79,15 @@ Each entry includes the inventory entry ID, source path, decoded size and
 SHA-256, semantic role, selection state, and selection evidence. The same
 entry ID can be passed to `extract_file` or `extract_bytes` to retrieve and
 verify the decoded source stream independently of semantic decoding.
+
+`active` means a source used by the geometry decoder, not necessarily the
+configuration currently selected in SolidWorks. Multiple partition entries
+can be active when the model contains geometry from multiple configurations.
+Entity provenance can establish this participation only when the stream path
+identifies one decoded inventory entry; duplicate paths remain unresolved.
+Nested stream discovery shares its byte, stream-count, and inflate-attempt
+budgets across contributing entries. `geometry.byte_domain_limit` reports when
+those budgets are exhausted; the returned domains then cover only a subset.
 
 Entity provenance records a stream, byte offset, source tag, and exactness when
 the decoder established them. Missing exactness evidence is `unknown`, never
@@ -126,6 +140,12 @@ OCP installation. OCP is a validation-time tool, not a package dependency.
 compares those values with volume, area, center of mass, and bounds computed
 from the native Part's decoded display tessellation. Tolerances are supplied by
 the oracle record and are never selected from the observed result.
+
+STEP capture counts explicit solids, free shells, and free faces separately,
+without sewing or healing. Free shells remain sheet representations even if
+closed; an export can therefore have different body kinds from the native
+document. Volume and volume-weighted center of mass include explicit solids
+only, while surface area includes sheets. Capture metadata records this scope.
 
 ## Compatibility boundary
 

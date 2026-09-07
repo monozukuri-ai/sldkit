@@ -79,6 +79,27 @@ fn decode_geometry_file_json(path: &str, profile: &str) -> PyResult<String> {
     ))
 }
 
+#[pyfunction]
+fn decode_drawing_structure_bytes_json(
+    data: &[u8],
+    filename: Option<&str>,
+    profile: &str,
+) -> PyResult<String> {
+    to_json(&sldkit_parser::decode_drawing_structure_bytes(
+        data,
+        filename,
+        &limits_for_profile(profile)?,
+    ))
+}
+
+#[pyfunction]
+fn decode_drawing_structure_file_json(path: &str, profile: &str) -> PyResult<String> {
+    to_json(&sldkit_parser::decode_drawing_structure_path(
+        path,
+        &limits_for_profile(profile)?,
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn scan_project_json(
@@ -229,6 +250,14 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(parse_file_json, module)?)?;
     module.add_function(wrap_pyfunction!(decode_geometry_bytes_json, module)?)?;
     module.add_function(wrap_pyfunction!(decode_geometry_file_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        decode_drawing_structure_bytes_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        decode_drawing_structure_file_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(scan_project_json, module)?)?;
     module.add_function(wrap_pyfunction!(extract_bytes_result, module)?)?;
     module.add_function(wrap_pyfunction!(extract_file_result, module)?)?;

@@ -3,8 +3,8 @@ use std::{fs::OpenOptions, io::Write, path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use sldkit_core::{
-    ExtractionMode, ExtractionStatus, GeometryStatus, InventoryStatus, LimitProfile, ParseStatus,
-    ProbeStatus, ProjectScanStatus, ResourceLimits,
+    DrawingStructureStatus, ExtractionMode, ExtractionStatus, GeometryStatus, InventoryStatus,
+    LimitProfile, ParseStatus, ProbeStatus, ProjectScanStatus, ResourceLimits,
 };
 
 #[derive(Debug, Parser)]
@@ -53,6 +53,12 @@ enum Command {
     },
     /// Decode modern Part B-Rep topology, geometry carriers, and tessellation.
     Geometry {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
+        limits: LimitArg,
+    },
+    /// Inventory modern Drawing source records without assigning renderable semantics.
+    Drawing {
         path: PathBuf,
         #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
         limits: LimitArg,
@@ -179,6 +185,7 @@ fn run(args: Args) -> Result<ExitCode, Box<dyn std::error::Error>> {
             })
         }
         Command::Geometry { path, limits } => run_geometry(path, limits),
+        Command::Drawing { path, limits } => run_drawing(path, limits),
         Command::Scan {
             path,
             project_root,
@@ -213,6 +220,16 @@ fn run(args: Args) -> Result<ExitCode, Box<dyn std::error::Error>> {
             })
         }
     }
+}
+
+fn run_drawing(path: PathBuf, limits: LimitArg) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let result = sldkit_parser::decode_drawing_structure_path(path, &limits.limits());
+    write_json(&result)?;
+    Ok(match result.status {
+        DrawingStructureStatus::Inventoried | DrawingStructureStatus::Partial => ExitCode::SUCCESS,
+        DrawingStructureStatus::Unsupported => ExitCode::from(1),
+        DrawingStructureStatus::Malformed | DrawingStructureStatus::Rejected => ExitCode::from(2),
+    })
 }
 
 fn run_geometry(path: PathBuf, limits: LimitArg) -> Result<ExitCode, Box<dyn std::error::Error>> {

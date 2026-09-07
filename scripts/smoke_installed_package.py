@@ -117,6 +117,32 @@ except sldkit.GeometryError as error:
 else:
     raise AssertionError("strict geometry decoding accepted a partial result")
 
+drawing_xml = (
+    b'<Keywords><Note id="n1">preserve</Note>'
+    b'<Sheet Type="Sheet" id="s1" Name="Sheet1">'
+    b'<View id="v1">child.SLDPRT</View></Sheet></Keywords>'
+)
+drawing = b"SLDK" + (4).to_bytes(4, "big")
+drawing += modern_stream("swXmlContents/KeyWords", drawing_xml)
+drawing += modern_stream("Contents/Definition", b"unframed")
+drawing_structure = sldkit.decode_drawing_structure_bytes(
+    drawing, filename="fixture.SLDDRW"
+)
+assert drawing_structure.status is sldkit.DrawingStructureStatus.PARTIAL
+assert drawing_structure.structure is not None
+assert len(drawing_structure.structure.records) == 4
+assert len(drawing_structure.structure.sheets) == 1
+assert len(drawing_structure.structure.views) == 1
+assert drawing_structure.structure.source_streams[0].record_framing_verified is False
+try:
+    sldkit.decode_drawing_structure_bytes(
+        drawing, filename="fixture.SLDDRW", strict=True
+    )
+except sldkit.DrawingStructureError as error:
+    assert error.result.status is sldkit.DrawingStructureStatus.PARTIAL
+else:
+    raise AssertionError("strict Drawing structure inventory accepted a partial result")
+
 assembly_xml = (
     b'<root><swHeader><swFile id="0" swDocType="ASSEMBLY"/>'
     b'<swFile id="1" swDocType="PART" swPath="child.SLDPRT"/>'

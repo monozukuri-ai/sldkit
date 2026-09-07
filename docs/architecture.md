@@ -15,6 +15,10 @@ The package has two public implementation layers:
 
 No vendor installation is required at runtime.
 
+The source distribution also carries an optional Windows PowerShell script for
+controlled SolidWorks API validation. It is not imported by either runtime
+layer, is not included in wheels, and does not provide a parser fallback.
+
 ## Data flow
 
 An input follows this sequence:
@@ -27,15 +31,17 @@ An input follows this sequence:
    supported.
 4. **Parse** converts recognized document metadata into source-faithful values
    with evidence and diagnostics.
-5. **Geometry** explicitly decodes modern Part topology, carriers, and
+5. **Drawing** inventories modern Drawing source records and exact carrier
+   identities without assigning renderable semantics.
+6. **Geometry** explicitly decodes modern Part topology, carriers, and
    tessellation with provenance and a loss report.
-6. **Scan** resolves decoded document references within explicit filesystem
+7. **Scan** resolves decoded document references within explicit filesystem
    roots and produces a dependency graph.
 
 Each stage has its own result status. A recognized container does not imply that
 all document semantics were decoded. Geometry success is reported separately,
-and a complete reference graph does not imply complete geometry or feature
-coverage.
+Drawing record inventory is reported separately, and a complete reference graph
+does not imply complete geometry or feature coverage.
 
 Modern and legacy inputs share the same source model, but only when the source
 provides the corresponding fact. For example, a legacy file may provide core
@@ -71,3 +77,8 @@ The modern Part geometry model follows the same boundary. It exposes
 source-oriented topology, carrier parameters, tessellation, exact stream
 identity, and loss records; it does not expose a downstream kernel handle or a
 shared interchange model. See [Modern Part geometry](geometry.md).
+
+The modern Drawing structure model similarly keeps exact source-record ranges,
+stable inventory IDs, and unframed carrier candidates separate from any 2D IR.
+It does not claim to reconstruct dimensions, annotations, projection, or view
+placement. See [Modern Drawing structure](drawing-structure.md).

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/monozukuri-ai/sldkit/docs/schemas/nurbs-geometry-oracle.schema.json",
+  "title": "Pinned numerical NURBS support comparison oracle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile",
+    "configuration",
+    "reference_tool_version",
+    "native",
+    "neutral",
+    "tolerances",
+    "samples_per_knot_span",
+    "bindings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "profile": {
+      "const": "nonperiodic_clamped_support_v1"
+    },
+    "configuration": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reference_tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "native": {
+      "$ref": "#/$defs/artifact"
+    },
+    "neutral": {
+      "$ref": "#/$defs/artifact"
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position_mm",
+        "parameter",
+        "weight",
+        "derivative_absolute_mm",
+        "derivative_relative"
+      ],
+      "properties": {
+        "position_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "parameter": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "derivative_absolute_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "derivative_relative": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "samples_per_knot_span": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 64
+    },
+    "bindings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "domain",
+          "native_id",
+          "step_subshape_index",
+          "reverse"
+        ],
+        "properties": {
+          "domain": {
+            "enum": [
+              "curve",
+              "surface"
+            ]
+          },
+          "native_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "step_subshape_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reverse": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "byte_size"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

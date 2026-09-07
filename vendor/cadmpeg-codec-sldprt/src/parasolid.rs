@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Extraction and header parsing for embedded Parasolid streams.
+//!
+//! A stream starts with `PS\0\0`, a big-endian description length and
+//! description, padding, and a length-prefixed
+//! `SCH_<modeller>_<schema>_<format>` token. Outer blocks may carry direct
+//! streams or zlib-compressed streams inside a transmit wrapper. Stream
+//! descriptions identify partition, deltas, and feature-profile payloads.
+
+use cadmpeg_container::compression::inflate_zlib_probe;
+use cadmpeg_core::bytes::contains;
+use cadmpeg_core::decode::View;
+use cadmpeg_ir::math::Point3;
+
+use crate::container::parasolid_offset;
+
+/// The constant 16-byte prefix of the wrapped Parasolid transmit-container
+/// magic. When it is present, the actual `PS\0\0` stream is a nested zlib member
+/// rather than bytes at the block payload's start ([spec §3](https://github.com/cadmpeg/cadmpeg/blob/main/docs/formats/sldprt.md#3-parasolid-stream), "wrapped"/"nested"
+/// families). The four bytes that follow this prefix are a per-container
+/// length/type field and are not part of the signature.
+const WRAPPED_MAGIC_PREFIX: [u8; 16] = [
+    0x23, 0x1d, 0xd5, 0x71, 0xda, 0x81, 0x48, 0xa2, 0xa8, 0x58, 0x98, 0xb2, 0x1b, 0x89, 0xef, 0x99,
+];
+
+/// Extract every valid direct or nested Parasolid stream in one block payload.
+pub fn extract_streams(payload: &[u8]) -> Vec<Vec<u8>> {
+    extract_streams_with_offsets(payload)
+        .into_iter()
+        .map(|(_, stream)| stream)
+        .collect()
+}
+
+/// Extract every stream with its direct or wrapper offset in the outer payload.
+pub fn extract_streams_with_offsets(payload: &[u8]) -> Vec<(usize, Vec<u8>)> {
+    let mut out = Vec::new();
+    let starts = direct_stream_starts(payload);
+    for (index, start) in starts.iter().copied().enumerate() {
+        let end = starts.get(index + 1).copied().unwrap_or(payload.len());
+        let candidate = payload[start..end].to_vec();
+        out.push((start, candidate));
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    if !contains(payload, &WRAPPED_MAGIC_PREFIX) {
+        return out;
+    }
+    // Try each zlib member; the first that inflates to a `PS\0\0`-leading stream
+    // is the embedded body. zlib headers are `78 01` / `78 9c` / `78 da`.
+    let mut i = 0usize;
+    while i + 2 <= payload.len() {
+        if payload[i] == 0x78 && matches!(payload[i + 1], 0x01 | 0x9c | 0xda) {
+            if let Some(inner) = inflate_zlib_candidate(&payload[i..]) {
+                if inner.starts_with(&[b'P', b'S', 0x00, 0x00])
+                    && stream_header(&inner).is_some()
+                    && !out.iter().any(|(_, stream)| stream == &inner)
+                {
+                    out.push((i, inner));
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn inflate_zlib_candidate(bytes: &[u8]) -> Option<Vec<u8>> {
+    let cap = (16 * 1024 * 1024_usize)
+        .saturating_add(bytes.len().saturating_mul(256))
+        .min(2 * 1024 * 1024 * 1024);
+    inflate_zlib_probe(bytes, cap)
+}
+
+/// Direct (uncompressed) Parasolid streams with their block-payload offsets.
+pub fn direct_streams_with_offsets(payload: &[u8]) -> Vec<(usize, Vec<u8>)> {
+    let starts = direct_stream_starts(payload);
+    starts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(payload.len());
+            (start, payload[start..end].to_vec())
+        })
+        .collect()
+}
+
+fn direct_stream_starts(payload: &[u8]) -> Vec<usize> {
+    payload
+        .windows(4)
+        .enumerate()
+        .filter_map(|(at, bytes)| (bytes == b"PS\0\0").then_some(at))
+        .filter(|start| stream_header(&payload[*start..]).is_some())
+        .collect()
+}
+
+/// Offsets of candidate wrapped zlib members in a block payload.
+pub fn wrapped_member_offsets(payload: &[u8]) -> Vec<usize> {
+    if !contains(payload, &WRAPPED_MAGIC_PREFIX) {
+        return Vec::new();
+    }
+    let mut offsets = Vec::new();
+    let mut i = 0usize;
+    while i + 2 <= payload.len() {
+        if payload[i] == 0x78 && matches!(payload[i + 1], 0x01 | 0x9c | 0xda) {
+            offsets.push(i);
+        }
+        i += 1;
+    }
+    offsets
+}
+
+/// Whether inflated bytes frame a valid Parasolid stream (`PS\0\0` plus a
+/// parsable header).
+pub fn is_parasolid_stream(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[b'P', b'S', 0x00, 0x00]) && stream_header(bytes).is_some()
+}
+
+/// Parsed framing fields for one Parasolid stream.
+#[derive(Debug, Clone)]
+pub struct StreamHeader {
+    /// Human-readable stream description.
+    pub description: String,
+    /// `SCH_<modeller>_<schema>_<format>` schema token.
+    pub schema: String,
+    /// Byte offset where the class-definition record body begins.
+    pub body_offset: usize,
+}
+
+/// Parse a Parasolid header from a buffer containing a leading-window signature.
+///
+/// Returns `None` when the signature, description, or schema token is missing or
+/// truncated.
+pub fn stream_header(payload: &[u8]) -> Option<StreamHeader> {
+    let sig = parasolid_offset(payload)?;
+    let desc_len_at = sig + 4;
+    let mut view = View::over_retained(payload);
+    view.seek(desc_len_at)?;
+    let desc_len = usize::from(view.u16_be()?);
+    let desc_start = desc_len_at + 2;
+    let desc_end = desc_start + desc_len;
+    let description = String::from_utf8_lossy(payload.get(desc_start..desc_end)?).into_owned();
+
+    // The padding between description and the length-prefixed schema token is not
+    // fixed, so the `SCH_` marker is located directly; the preceding byte is the
+    // schema length ([spec §4.1](https://github.com/cadmpeg/cadmpeg/blob/main/docs/formats/sldprt.md#41-stored-edge-direction)).
+    let window_end = (desc_end + 64).min(payload.len());
+    let rel = payload
+        .get(desc_end..window_end)?
+        .windows(4)
+        .position(|w| w == b"SCH_")?;
+    let schema_at = desc_end + rel;
+    let schema_len = *payload.get(schema_at.checked_sub(1)?)? as usize;
+    let schema_end = schema_at + schema_len;
+    let schema = String::from_utf8_lossy(payload.get(schema_at..schema_end)?).into_owned();
+
+    Some(StreamHeader {
+        description,
+        schema,
+        body_offset: schema_end,
+    })
+}
+
+/// Test whether the description identifies a partition or deltas body stream.
+pub fn is_body_stream(header: &StreamHeader) -> bool {
+    let d = header.description.to_ascii_lowercase();
+    d.contains("partition") || d.contains("deltas")
+}
+
+/// Decode the unique counted XYZ polyline carried by a mesh stream.
+///
+/// Mesh coordinate arrays use a big-endian scalar count followed by the
+/// `0x0022` array tag and consecutive f64 values. The scalar count is three
+/// times the point count.
+pub(crate) fn mesh_polyline(payload: &[u8]) -> Option<Vec<Point3>> {
+    let header = stream_header(payload)?;
+    let schema = header.schema.to_ascii_lowercase();
+    if !schema.ends_with("_13006") {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    for tag_at in header.body_offset..payload.len().saturating_sub(2) {
+        if payload.get(tag_at..tag_at + 2) != Some(&[0x00, 0x22]) || tag_at < 4 {
+            continue;
+        }
+        let Some(scalar_count) =
+            View::u32_be_at(payload, tag_at - 4).and_then(|count| usize::try_from(count).ok())
+        else {
+            continue;
+        };
+        if scalar_count < 6 || scalar_count % 3 != 0 {
+            continue;
+        }
+        let Some(byte_count) = scalar_count.checked_mul(8) else {
+            continue;
+        };
+        let Some(values) = payload.get(tag_at + 2..tag_at + 2 + byte_count) else {
+            continue;
+        };
+        let mut points = Vec::with_capacity(scalar_count / 3);
+        for xyz in values.chunks_exact(24) {
+            let point = Point3::new(
+                View::f64_be_at(xyz, 0)?,
+                View::f64_be_at(xyz, 8)?,
+                View::f64_be_at(xyz, 16)?,
+            );
+            if ![point.x, point.y, point.z].into_iter().all(f64::is_finite) {
+                points.clear();
+                break;
+            }
+            points.push(point);
+        }
+        if points.len() >= 2 {
+            candidates.push((scalar_count, points));
+        }
+    }
+    candidates.sort_by_key(|(scalar_count, _)| std::cmp::Reverse(*scalar_count));
+    let (largest_count, points) = candidates.first()?;
+    if candidates
+        .get(1)
+        .is_some_and(|(count, _)| count == largest_count)
+    {
+        return None;
+    }
+    Some(points.clone())
+}
+
+#[cfg(test)]
+mod tests;

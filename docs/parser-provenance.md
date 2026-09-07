@@ -46,7 +46,13 @@ Application-defined records still require independent evidence and remain
 preserved when their meaning is not established.
 
 Modern Part geometry decoding uses the pinned Apache-2.0
-`cadmpeg-codec-sldprt` 0.5.3 dependency. Its published development policy
+`cadmpeg-codec-sldprt` 0.5.3 source with the `0.5.3+sldkit.4` patch.
+Patch 3 corrects FIN link/end-vertex interpretation only after the verified
+native hierarchy/schema gate. Source read spans remain attached to the original
+bytes; orientation conversion does not certify numeric source trim intervals.
+The [patch record](../vendor/cadmpeg-codec-sldprt/PATCHES.md) identifies the
+upstream archive, changed files, evidence, and exact supported schema.
+Its published development policy
 limits format work to lawfully obtained CAD bytes, public information, and
 project-authored experiments, and excludes proprietary SDK-derived or
 confidential implementation material. `sldkit` applies its own bounded input,
@@ -54,6 +60,19 @@ source model, diagnostics, exact-stream identity, and validation contract at
 the public boundary rather than exposing the dependency's interchange model.
 The dependency version and source are reviewable in `Cargo.lock` and the
 [upstream legal policy](https://github.com/cadmpeg/cadmpeg/blob/v0.5.3/LEGAL.md).
+
+Standard embedded Parasolid headers and the shared partial geometry readers now
+come from `parasolid-core 0.1.0-dev6`, with the registry checksum in `Cargo.lock`.
+The original core is MIT licensed; adopted cadmpeg/sldkit readers are Apache-2.0
+licensed, and the core declares `MIT AND Apache-2.0`. Both license texts remain
+in the distribution. Patch 4 removes the adapter's duplicate readers while
+retaining unit conversion, public models and source classification.
+
+Core schema framing determines the existing body-domain origin; malformed
+numeric framing and limits are covered by adapter tests. The local header reader
+is restricted to the two source-less writer keys. Partial known-record reads
+and bounded point/topology merging do not prove complete delta application or
+final saved state; see the [dependency boundary](geometry.md#parasolid-dependency).
 
 ## Distribution boundary
 

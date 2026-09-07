@@ -6,6 +6,7 @@ members = [
     "crates/sldkit-python",
     "crates/sldkit-cli",
 ]
+exclude = ["vendor/cadmpeg-codec-sldprt"]
 resolver = "3"
 
 [workspace.package]
@@ -19,13 +20,14 @@ homepage = "https://github.com/monozukuri-ai/sldkit"
 readme = "README.md"
 
 [workspace.dependencies]
-cadmpeg-codec-sldprt = "=0.5.3"
+cadmpeg-codec-sldprt = { path = "vendor/cadmpeg-codec-sldprt", version = "=0.5.3" }
 cadmpeg-core = "=0.5.3"
 cadmpeg-ir = "=0.5.3"
 cfb = "0.14.0"
 clap = { version = "4.6.6", features = ["derive"] }
 crc32fast = "1.5.0"
 flate2 = "1.1.9"
+parasolid-core = "=0.1.0-dev6"
 pyo3 = { version = "0.29.2", features = ["extension-module", "abi3-py310"] }
 roxmltree = "0.21.1"
 serde = { version = "1.0.229", features = ["derive"] }

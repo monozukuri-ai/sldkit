@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pinned rectangular NURBS trim comparison",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile",
+    "support_oracle",
+    "uv_tolerance",
+    "face_bindings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "profile": {
+      "const": "rectangular_isoparametric_trim_v1"
+    },
+    "support_oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "byte_size"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "uv_tolerance": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "face_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "native_face_id",
+          "step_face_index",
+          "coedges"
+        ],
+        "properties": {
+          "native_face_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "step_face_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coedges": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "native_coedge_id",
+                "step_edge_index"
+              ],
+              "properties": {
+                "native_coedge_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "step_edge_index": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

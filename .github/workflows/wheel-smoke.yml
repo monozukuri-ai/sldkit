@@ -10,6 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  backend-tests:
+    name: Native body and configuration backend
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test the patched decoder
+        env:
+          CARGO_TARGET_DIR: target
+        run: cargo test --locked --manifest-path vendor/cadmpeg-codec-sldprt/Cargo.toml --lib
+
   wheel-smoke:
     name: ${{ matrix.name }} / ABI3 Python 3.10+
     runs-on: ${{ matrix.runner }}

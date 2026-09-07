@@ -8,8 +8,14 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 CAD_SUFFIXES = {".sldprt", ".sldasm", ".slddrw"}
-FORBIDDEN_ROOTS = {"reference", "corpus", "designs"}
-FORBIDDEN_REQUIREMENTS = {"cad3d-ir", "cadquery", "occt", "pythonocc-core"}
+FORBIDDEN_ROOTS = {"reference", "corpus", "designs", ".cargo"}
+FORBIDDEN_REQUIREMENTS = {
+    "cad3d-ir",
+    "cadquery",
+    "occt",
+    "pythonocc-core",
+    "parasolid-kit",
+}
 
 
 def _expand_artifacts(paths: list[Path]) -> list[Path]:
@@ -62,6 +68,9 @@ def _check_wheel(path: Path) -> None:
             name.endswith("licenses/LICENSES/Apache-2.0.txt") for name in names
         ), path
         assert any(
+            name.endswith("licenses/LICENSES/parasolid-core-MIT.txt") for name in names
+        ), path
+        assert any(
             "sldkit/_core" in name and name.endswith((".so", ".pyd", ".dylib"))
             for name in names
         ), path
@@ -89,6 +98,40 @@ def _check_wheel(path: Path) -> None:
 def _check_sdist(path: Path) -> None:
     with tarfile.open(path, "r:gz") as archive:
         names = archive.getnames()
+
+        def source(relative: str) -> str:
+            name = next(
+                name for name in names if "/".join(_normalized_parts(name)) == relative
+            )
+            member = archive.extractfile(name)
+            assert member is not None, (path, relative)
+            return member.read().decode("utf-8")
+
+        lock = source("Cargo.lock")
+        core_block = next(
+            block
+            for block in lock.split("[[package]]")
+            if '\nname = "parasolid-core"\n' in block
+        )
+        assert 'version = "0.1.0-dev6"' in core_block, (path, core_block)
+        assert (
+            'source = "registry+https://github.com/rust-lang/crates.io-index"'
+            in core_block
+        )
+        assert 'checksum = "' in core_block, (path, core_block)
+        for name in (
+            "topology",
+            "native_fin",
+            "native_hierarchy",
+            "spline",
+            "intersection",
+            "blend",
+            "offset",
+            "sweep",
+            "subset",
+        ):
+            adapter = source(f"vendor/cadmpeg-codec-sldprt/src/brep/{name}.rs")
+            assert "parasolid_core::partial" in adapter, (path, name)
     _check_names(path, names)
     normalized = {"/".join(_normalized_parts(name)) for name in names}
     assert "Cargo.toml" in normalized, path
@@ -102,13 +145,29 @@ def _check_sdist(path: Path) -> None:
     assert "docs/drawing-validation.md" in normalized, path
     assert "docs/schemas/drawing-ground-truth.schema.json" in normalized, path
     assert "docs/schemas/geometry-oracle.schema.json" in normalized, path
+    assert "docs/schemas/nurbs-geometry-oracle.schema.json" in normalized, path
+    assert "docs/schemas/nurbs-trim-oracle.schema.json" in normalized, path
     assert "docs/project-scanning.md" in normalized, path
     assert "docs/parser-provenance.md" in normalized, path
     assert "scripts/capture_drawing_ground_truth.ps1" in normalized, path
     assert "scripts/compare_drawing_structures.py" in normalized, path
+    assert "scripts/capture_step_geometry.py" in normalized, path
+    assert "scripts/nurbs_geometry.py" in normalized, path
+    assert "scripts/validate_nurbs_geometry.py" in normalized, path
+    assert "scripts/validate_nurbs_trim.py" in normalized, path
+    assert "vendor/cadmpeg-codec-sldprt/src/brep/native_fin.rs" in normalized, path
     assert "LICENSE" in normalized, path
     assert "LICENSES/Apache-2.0.txt" in normalized, path
+    assert "LICENSES/parasolid-core-MIT.txt" in normalized, path
     assert "LICENSES/README.md" in normalized, path
+    for required in (
+        "Cargo.toml",
+        "LICENSE",
+        "PATCHES.md",
+        "src/brep/native_hierarchy.rs",
+        "src/byte_ledger.rs",
+    ):
+        assert f"vendor/cadmpeg-codec-sldprt/{required}" in normalized, path
 
 
 def main() -> None:

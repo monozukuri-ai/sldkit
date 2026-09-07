@@ -108,7 +108,15 @@ explicit relocation can be supplied with
 `--windows-prefix-map 'Z:\\CAD=/mnt/cad'`; unresolved basename fallback remains
 labeled and never selects among multiple candidates.
 
+Geometry fidelity includes verified per-domain field spans and typed/uninterpreted
+byte ranges. Complete byte accounting is separate from semantic geometry coverage;
+see [geometry fidelity](docs/geometry.md).
+
 ## Architecture boundary
+
+`sldkit-parser` uses the published Rust `parasolid-core` crate for embedded
+Parasolid headers and shared partial topology/geometry readers. No Python `parasolid-kit` installation or adjacent
+checkout is required. See the [migration boundary](docs/geometry.md#parasolid-dependency).
 
 `sldkit` owns SolidWorks-specific parsing and source models. It does not depend
 on `cad3d-ir`, CadQuery, Open CASCADE, a vendor SDK, COM, or a viewer. A separate
@@ -120,6 +128,7 @@ validation tooling; it is not imported by the package or included in wheels.
 
 ```bash
 cargo test --workspace
+CARGO_TARGET_DIR=target cargo test --locked --manifest-path vendor/cadmpeg-codec-sldprt/Cargo.toml --lib
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo +nightly fuzz run inventory -- -runs=10000

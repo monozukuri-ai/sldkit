@@ -55,6 +55,10 @@ include = [
     { path = "docs/**/*", format = "sdist" },
     { path = "scripts/capture_drawing_ground_truth.ps1", format = "sdist" },
     { path = "scripts/compare_drawing_structures.py", format = "sdist" },
+    { path = "scripts/capture_step_geometry.py", format = "sdist" },
+    { path = "scripts/nurbs_geometry.py", format = "sdist" },
+    { path = "scripts/validate_nurbs_geometry.py", format = "sdist" },
+    { path = "scripts/validate_nurbs_trim.py", format = "sdist" },
 ]
 exclude = [
     "reference/**",

@@ -9,7 +9,7 @@ use cadmpeg_core::{
     decode::{DecodeMode, DecodePolicy, ResourceLimits as DecoderResourceLimits},
 };
 use cadmpeg_ir::{
-    Codec, DecodeOptions, Exactness,
+    DecodeOptions, Exactness,
     document::CadIr,
     ids::{BodyId, CoedgeId, EdgeId, FaceId, LoopId, RegionId, ShellId, VertexId},
     topology::BodyKind,
@@ -35,8 +35,11 @@ use sldkit_core::{
     InventoryResult, InventoryStatus, ResourceLimits, SourceInfo, SourceInputKind,
 };
 
+mod byte_partition;
+mod parasolid;
+
 const DECODER_NAME: &str = "cadmpeg-codec-sldprt";
-const DECODER_VERSION: &str = "0.5.3";
+const DECODER_VERSION: &str = "0.5.3+sldkit.4";
 const MAX_NESTED_STREAM_PROBES: u64 = 1_024;
 const PARASOLID_MAGIC: &[u8; 4] = b"PS\0\0";
 const WRAPPED_PARASOLID_MAGIC_PREFIX: [u8; 16] = [
@@ -96,7 +99,7 @@ pub(crate) fn decode(
         policy: decoder_policy(limits),
     };
     let mut reader = Cursor::new(data);
-    let decoded = match SldprtCodec.decode(&mut reader, &options) {
+    let (decoded, ledger) = match SldprtCodec.decode_with_byte_ledger(&mut reader, &options) {
         Ok(decoded) => decoded,
         Err(error) => return decoder_failure(inspection.diagnostics, &error),
     };
@@ -138,6 +141,7 @@ pub(crate) fn decode(
         active_stream,
         decoded.report().geometry_transferred,
         &model,
+        &ledger,
     );
     let raw_records = decoded
         .source_fidelity()
@@ -169,8 +173,44 @@ pub(crate) fn decode(
             entity_id: finding.entity.clone(),
         })
         .collect::<Vec<_>>();
-    let (byte_domains, domain_limit_hit) = byte_domains(data, &source_streams, limits);
-    let byte_coverage = byte_coverage(data, &source_streams, &byte_domains, &raw_records, &model);
+    let (byte_domains, domain_streams, domain_limit_hit) =
+        discover_byte_domains(data, &source_streams, limits);
+    let mut byte_coverage =
+        byte_coverage(data, &source_streams, &byte_domains, &raw_records, &model);
+    let partition = if domain_limit_hit {
+        None
+    } else {
+        match byte_partition::normalize(&byte_domains, &domain_streams, &ledger) {
+            Ok(partition) => partition,
+            Err(error) => {
+                let mut diagnostics = inspection.diagnostics;
+                diagnostics.push(
+                    Diagnostic::new(
+                        "geometry.byte_ledger_invalid",
+                        DiagnosticSeverity::Error,
+                        DiagnosticKind::Fatal,
+                        "decoder byte ranges failed source-domain validation",
+                    )
+                    .with_detail("error", error),
+                );
+                return GeometryResult {
+                    status: GeometryStatus::Rejected,
+                    geometry: None,
+                    diagnostics,
+                };
+            }
+        }
+    };
+    let (byte_spans, byte_ranges) = if let Some(partition) = partition {
+        byte_coverage.partition_status = GeometryBytePartitionStatus::Complete;
+        byte_coverage.typed_bytes = Some(partition.typed_bytes);
+        byte_coverage.uninterpreted_bytes = Some(partition.uninterpreted_bytes);
+        byte_coverage.classified_active_bytes = byte_coverage.partition_domain_bytes;
+        byte_coverage.unclassified_active_bytes = 0;
+        (partition.spans, partition.ranges)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let fidelity = GeometryFidelityReport {
         decoder: DECODER_NAME.to_owned(),
         decoder_version: DECODER_VERSION.to_owned(),
@@ -181,6 +221,8 @@ pub(crate) fn decode(
             .map(|(name, count)| (name.clone(), u64::try_from(*count).unwrap_or(u64::MAX)))
             .collect(),
         byte_domains,
+        byte_spans,
+        byte_ranges,
         byte_coverage,
         losses,
         validation_findings,
@@ -223,7 +265,7 @@ pub(crate) fn decode(
             "geometry.byte_partition_incomplete",
             DiagnosticSeverity::Info,
             DiagnosticKind::Unsupported,
-            "entity byte locations are available, but source record lengths do not yet provide a complete typed-versus-uninterpreted range partition",
+            "a complete, supported decoder read ledger and independently verified byte domains are unavailable",
         ));
     }
 
@@ -794,6 +836,7 @@ fn stream_candidates(
     active_stream: Option<&str>,
     geometry_transferred: bool,
     model: &GeometryModel,
+    ledger: &cadmpeg_codec_sldprt::byte_ledger::ByteLedger,
 ) -> Vec<GeometryStreamCandidate> {
     let Some(inventory) = inspection.inventory.as_ref() else {
         return Vec::new();
@@ -833,15 +876,28 @@ fn stream_candidates(
             let is_active = unique_path
                 && active_stream.is_some_and(|active| active.eq_ignore_ascii_case(path));
             let contributes = unique_path && contributing_streams.contains(&lower);
+            let ledger_site = ledger.version == 1
+                && byte_partition::site_key(&entry.id).is_ok_and(|site| {
+                    ledger
+                        .domains
+                        .iter()
+                        .any(|domain| domain.site_key == site && domain.stream_path == path)
+                });
             let (selection, evidence) = if is_active {
                 (
                     GeometryStreamSelection::Active,
                     vec!["decoder.source.active_parasolid_block".to_owned()],
                 )
-            } else if contributes && role != GeometryStreamRole::Tessellation {
+            } else if (contributes || ledger_site) && role != GeometryStreamRole::Tessellation {
+                // Withheld topology must not hide a decoder-read source domain.
+                // The independent domain/hash checks still validate every span.
                 (
                     GeometryStreamSelection::Active,
-                    vec!["decoder.entity.provenance_stream".to_owned()],
+                    vec![if contributes {
+                        "decoder.entity.provenance_stream".to_owned()
+                    } else {
+                        "decoder.byte_ledger.source_site".to_owned()
+                    }],
                 )
             } else if role == GeometryStreamRole::Tessellation {
                 (
@@ -929,12 +985,13 @@ impl NestedStreamBudget {
     }
 }
 
-fn byte_domains(
+fn discover_byte_domains(
     data: &[u8],
     streams: &[GeometryStreamCandidate],
     limits: &ResourceLimits,
-) -> (Vec<GeometryByteDomain>, bool) {
+) -> (Vec<GeometryByteDomain>, BTreeMap<String, Vec<u8>>, bool) {
     let mut domains = Vec::new();
+    let mut domain_streams = BTreeMap::new();
     let mut budget = NestedStreamBudget::new(limits);
     for stream in streams.iter().filter(|stream| {
         stream.selection == GeometryStreamSelection::Active
@@ -951,8 +1008,9 @@ fn byte_domains(
         for nested in nested_parasolid_streams_budgeted(&payload, limits, &mut budget) {
             let body = &nested.bytes[nested.body_offset..];
             let ordinal = domains.len();
+            let id = format!("{}:parasolid-body:{ordinal:04}", stream.entry_id);
             domains.push(GeometryByteDomain {
-                id: format!("{}:parasolid-body:{ordinal:04}", stream.entry_id),
+                id: id.clone(),
                 container_entry_id: stream.entry_id.clone(),
                 stream_path: stream.stream_path.clone(),
                 role: nested.role,
@@ -967,9 +1025,10 @@ fn byte_domains(
                 sha256: sha256_hex(body),
                 offset_basis: GeometryByteOffsetBasis::ParasolidBody,
             });
+            domain_streams.insert(id, nested.bytes);
         }
     }
-    (domains, budget.limit_hit)
+    (domains, domain_streams, budget.limit_hit)
 }
 
 #[cfg(test)]
@@ -986,7 +1045,7 @@ fn nested_parasolid_streams_budgeted(
         .windows(PARASOLID_MAGIC.len())
         .enumerate()
         .filter_map(|(offset, value)| (value == PARASOLID_MAGIC).then_some(offset))
-        .filter(|offset| parasolid_header(&payload[*offset..]).is_some())
+        .filter(|offset| parasolid::header(&payload[*offset..], limits).is_some())
         .take(usize::try_from(budget.streams.saturating_add(1)).unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
     if !direct_starts.is_empty() {
@@ -1007,6 +1066,7 @@ fn nested_parasolid_streams_budgeted(
                 start,
                 GeometryByteStorage::Direct,
                 payload[start..end].to_vec(),
+                limits,
             ) {
                 nested.push(stream);
             }
@@ -1048,7 +1108,7 @@ fn nested_parasolid_streams_budgeted(
             continue;
         }
         if let Some(candidate) =
-            nested_parasolid_stream(offset, GeometryByteStorage::WrappedZlib, bytes)
+            nested_parasolid_stream(offset, GeometryByteStorage::WrappedZlib, bytes, limits)
         {
             budget.streams -= 1;
             nested.push(candidate);
@@ -1061,8 +1121,9 @@ fn nested_parasolid_stream(
     outer_payload_offset: usize,
     storage: GeometryByteStorage,
     bytes: Vec<u8>,
+    limits: &ResourceLimits,
 ) -> Option<NestedParasolidStream> {
-    let (description, schema, body_offset) = parasolid_header(&bytes)?;
+    let (description, schema, body_offset) = parasolid::header(&bytes, limits)?;
     let lower = description.to_ascii_lowercase();
     let role = if lower.contains("partition") {
         GeometryStreamRole::ParasolidPartition
@@ -1080,27 +1141,6 @@ fn nested_parasolid_stream(
         body_offset,
         role,
     })
-}
-
-fn parasolid_header(payload: &[u8]) -> Option<(String, String, usize)> {
-    if !payload.starts_with(PARASOLID_MAGIC) {
-        return None;
-    }
-    let description_len = usize::from(u16::from_be_bytes([*payload.get(4)?, *payload.get(5)?]));
-    let description_start = 6_usize;
-    let description_end = description_start.checked_add(description_len)?;
-    let description =
-        String::from_utf8_lossy(payload.get(description_start..description_end)?).into_owned();
-    let search_end = description_end.saturating_add(64).min(payload.len());
-    let schema_relative = payload
-        .get(description_end..search_end)?
-        .windows(4)
-        .position(|value| value == b"SCH_")?;
-    let schema_start = description_end.checked_add(schema_relative)?;
-    let schema_len = usize::from(*payload.get(schema_start.checked_sub(1)?)?);
-    let schema_end = schema_start.checked_add(schema_len)?;
-    let schema = String::from_utf8_lossy(payload.get(schema_start..schema_end)?).into_owned();
-    Some((description, schema, schema_end))
 }
 
 fn inflate_zlib_bounded(
@@ -1465,7 +1505,7 @@ mod tests {
     };
 
     fn framed_parasolid(description: &str, body: &[u8]) -> Vec<u8> {
-        let schema = b"SCH_TEST_1_13006";
+        let schema = b"SCH_3701229_37102_13006";
         let mut bytes = b"PS\0\0".to_vec();
         bytes.extend_from_slice(
             &u16::try_from(description.len())
@@ -1473,8 +1513,14 @@ mod tests {
                 .to_be_bytes(),
         );
         bytes.extend_from_slice(description.as_bytes());
-        bytes.push(u8::try_from(schema.len()).unwrap_or(u8::MAX));
+        bytes.extend_from_slice(
+            &i32::try_from(schema.len())
+                .unwrap_or(i32::MAX)
+                .to_be_bytes(),
+        );
         bytes.extend_from_slice(schema);
+        bytes.extend_from_slice(&239_u16.to_be_bytes());
+        bytes.extend_from_slice(&0_i32.to_be_bytes());
         bytes.extend_from_slice(body);
         bytes
     }
@@ -1614,7 +1660,8 @@ mod tests {
                 },
             });
         }
-        let candidates = super::stream_candidates(&inspection, None, true, &model);
+        let ledger = cadmpeg_codec_sldprt::byte_ledger::ByteLedger::default();
+        let candidates = super::stream_candidates(&inspection, None, true, &model, &ledger);
         assert_eq!(
             candidates.iter().map(|c| c.selection).collect::<Vec<_>>(),
             vec![
@@ -1637,10 +1684,45 @@ mod tests {
             Some("Contents/Config-0-Partition"),
             true,
             &model,
+            &ledger,
         );
         assert_eq!(candidates[0].selection, GeometryStreamSelection::Alternate);
         assert_eq!(candidates[4].selection, GeometryStreamSelection::Alternate);
         assert_eq!(candidates[1].selection, GeometryStreamSelection::Active);
+        Ok(())
+    }
+
+    #[test]
+    fn withheld_geometry_keeps_verified_decoder_read_domains()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = encoded_cube()?;
+        let limits = ResourceLimits::service();
+        let inspection = crate::inspect_bytes(&bytes, None, &limits);
+        let (_, mut ledger) = cadmpeg_codec_sldprt::SldprtCodec.decode_with_byte_ledger(
+            &mut std::io::Cursor::new(&bytes),
+            &cadmpeg_ir::DecodeOptions::default(),
+        )?;
+        assert!(!ledger.domains.is_empty());
+        let model = sldkit_core::GeometryModel::default();
+        let candidates = super::stream_candidates(&inspection, None, false, &model, &ledger);
+        assert!(candidates.iter().any(|c| {
+            c.selection_evidence
+                .iter()
+                .any(|e| e == "decoder.byte_ledger.source_site")
+        }));
+        let (domains, streams, limited) =
+            super::discover_byte_domains(&bytes, &candidates, &limits);
+        assert!(!limited);
+        assert!(super::byte_partition::normalize(&domains, &streams, &ledger)?.is_some());
+        for domain in &mut ledger.domains {
+            domain.site_key = "block@9999999".into();
+        }
+        let candidates = super::stream_candidates(&inspection, None, false, &model, &ledger);
+        assert!(
+            candidates
+                .iter()
+                .all(|c| c.selection != sldkit_core::GeometryStreamSelection::Active)
+        );
         Ok(())
     }
 
@@ -1839,6 +1921,40 @@ mod tests {
     }
 
     #[test]
+    fn byte_ledger_preserves_the_ordinary_decoder_result() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use cadmpeg_ir::Codec;
+        let bytes = encoded_controlled_composite()?;
+        let options = cadmpeg_ir::DecodeOptions::default();
+        let ordinary = SldprtCodec.decode(&mut std::io::Cursor::new(&bytes), &options)?;
+        let (instrumented, ledger) =
+            SldprtCodec.decode_with_byte_ledger(&mut std::io::Cursor::new(&bytes), &options)?;
+        assert_eq!(
+            serde_json::to_value(ordinary.ir())?,
+            serde_json::to_value(instrumented.ir())?
+        );
+        assert_eq!(
+            serde_json::to_value(ordinary.source_fidelity())?,
+            serde_json::to_value(instrumented.source_fidelity())?
+        );
+        assert_eq!(
+            serde_json::to_value(ordinary.report())?,
+            serde_json::to_value(instrumented.report())?
+        );
+        assert_eq!(ledger.version, 1);
+        assert!(!ledger.domains.is_empty());
+        assert!(
+            ledger
+                .domains
+                .iter()
+                .flat_map(|d| &d.spans)
+                .any(|s| s.tag == "nurbs.control")
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
     fn source_less_cube_maps_topology_and_exact_stream_identity()
     -> Result<(), Box<dyn std::error::Error>> {
         let bytes = encoded_cube()?;
@@ -1867,19 +1983,40 @@ mod tests {
         let coverage = geometry.fidelity.byte_coverage;
         assert_eq!(
             coverage.partition_status,
-            GeometryBytePartitionStatus::Incomplete
+            GeometryBytePartitionStatus::Complete
         );
         assert!(coverage.located_entity_count > 0);
         assert!(coverage.unique_location_count > 0);
         assert!(coverage.unique_location_count <= coverage.located_entity_count);
-        assert_eq!(coverage.classified_active_bytes, 0);
         assert_eq!(
-            coverage.unclassified_active_bytes,
+            coverage.classified_active_bytes,
             coverage.partition_domain_bytes
         );
+        assert_eq!(coverage.unclassified_active_bytes, 0);
         assert!(coverage.partition_domain_bytes > 0);
-        assert_eq!(coverage.typed_bytes, None);
-        assert_eq!(coverage.uninterpreted_bytes, None);
+        assert!(coverage.typed_bytes.is_some_and(|value| value > 0));
+        assert!(coverage.uninterpreted_bytes.is_some_and(|value| value > 0));
+        assert_eq!(
+            coverage
+                .typed_bytes
+                .zip(coverage.uninterpreted_bytes)
+                .map(|(a, b)| a + b),
+            Some(coverage.partition_domain_bytes)
+        );
+        assert!(!geometry.fidelity.byte_spans.is_empty());
+        for domain in &geometry.fidelity.byte_domains {
+            let mut cursor = 0;
+            for range in geometry
+                .fidelity
+                .byte_ranges
+                .iter()
+                .filter(|range| range.domain_id == domain.id)
+            {
+                assert_eq!(range.offset, cursor);
+                cursor += range.byte_len;
+            }
+            assert_eq!(cursor, domain.byte_len);
+        }
 
         assert!(!geometry.fidelity.byte_domains.is_empty());
         assert_eq!(

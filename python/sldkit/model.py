@@ -264,6 +264,11 @@ class GeometryExactness(_StringEnum):
     UNKNOWN = "unknown"
 
 
+class GeometryByteClassification(_StringEnum):
+    TYPED = "typed"
+    UNINTERPRETED = "uninterpreted"
+
+
 class GeometryBytePartitionStatus(_StringEnum):
     COMPLETE = "complete"
     INCOMPLETE = "incomplete"
@@ -1218,8 +1223,7 @@ class DrawingStructureDocument:
                 for item in value.get("sheets", [])
             ),
             views=tuple(
-                DrawingStructureView.from_dict(item)
-                for item in value.get("views", [])
+                DrawingStructureView.from_dict(item) for item in value.get("views", [])
             ),
             source_streams=tuple(
                 DrawingCarrier.from_dict(item)
@@ -2390,6 +2394,58 @@ class GeometryByteCoverage:
 
 
 @dataclass(frozen=True, slots=True)
+class GeometryDecodedSpan:
+    domain_id: str
+    offset: int
+    byte_len: int
+    classification: GeometryByteClassification
+    tag: str
+    source_record_id: int | None
+    sha256: str
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryDecodedSpan:
+        return cls(
+            domain_id=str(value["domain_id"]),
+            offset=int(value["offset"]),
+            byte_len=int(value["byte_len"]),
+            classification=GeometryByteClassification(value["classification"]),
+            tag=str(value["tag"]),
+            source_record_id=_optional_int(value.get("source_record_id")),
+            sha256=str(value["sha256"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = {name: getattr(self, name) for name in self.__dataclass_fields__}
+        result["classification"] = self.classification.value
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryByteRange:
+    domain_id: str
+    offset: int
+    byte_len: int
+    classification: GeometryByteClassification
+    reason: str
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryByteRange:
+        return cls(
+            domain_id=str(value["domain_id"]),
+            offset=int(value["offset"]),
+            byte_len=int(value["byte_len"]),
+            classification=GeometryByteClassification(value["classification"]),
+            reason=str(value["reason"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result = {name: getattr(self, name) for name in self.__dataclass_fields__}
+        result["classification"] = self.classification.value
+        return result
+
+
+@dataclass(frozen=True, slots=True)
 class GeometryFidelityReport:
     decoder: str
     decoder_version: str
@@ -2399,6 +2455,8 @@ class GeometryFidelityReport:
     byte_coverage: GeometryByteCoverage
     losses: tuple[GeometryLoss, ...]
     validation_findings: tuple[GeometryFinding, ...]
+    byte_spans: tuple[GeometryDecodedSpan, ...] = ()
+    byte_ranges: tuple[GeometryByteRange, ...] = ()
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> GeometryFidelityReport:
@@ -2415,6 +2473,14 @@ class GeometryFidelityReport:
                 for item in value.get("byte_domains", [])
             ),
             byte_coverage=GeometryByteCoverage.from_dict(value["byte_coverage"]),
+            byte_spans=tuple(
+                GeometryDecodedSpan.from_dict(item)
+                for item in value.get("byte_spans", [])
+            ),
+            byte_ranges=tuple(
+                GeometryByteRange.from_dict(item)
+                for item in value.get("byte_ranges", [])
+            ),
             losses=tuple(
                 GeometryLoss.from_dict(item) for item in value.get("losses", [])
             ),
@@ -2436,6 +2502,10 @@ class GeometryFidelityReport:
                 item.to_dict() for item in self.validation_findings
             ],
         }
+        if self.byte_spans:
+            result["byte_spans"] = [item.to_dict() for item in self.byte_spans]
+        if self.byte_ranges:
+            result["byte_ranges"] = [item.to_dict() for item in self.byte_ranges]
         if self.byte_domains:
             result["byte_domains"] = [item.to_dict() for item in self.byte_domains]
         return result

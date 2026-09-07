@@ -5,6 +5,38 @@ files. It is separate from metadata parsing so callers can inspect properties
 and references without paying the geometry cost or accepting a geometry
 dependency in their data flow.
 
+## Parasolid dependency
+
+`sldkit-parser` and its SolidWorks adapter use the published
+`parasolid-core = "=0.1.0-dev6"` Rust crate. No Python `parasolid-kit` package or
+adjacent checkout is required. Standard embedded `X_B` headers are validated
+under the caller's size/string limits. The public `parasolid_body` origin remains
+immediately after the schema string; offsets and hashes retain their meaning.
+The two source-less cadmpeg writer keys retain their explicit local header reader.
+
+The production path calls `parasolid_core::partial` for compact topology,
+validated BODY/REGION/SHELL ownership, FIN normalization, analytic/NURBS carriers,
+intersection caches, sweep/spin, offset, blend, subset records, and exact read
+spans where instrumented. Point and NURBS patch helpers are shared too. The old
+copies of these readers have been removed; there is no second geometry decode
+or retry through them. Core values stay in source units; the adapter converts
+model-space lengths to millimetres exactly once and preserves wire IDs/offsets.
+
+Container extraction, configuration/stream pairing, public models, source hashes,
+byte-partition classification, attributes/history, pcurve/patch construction,
+and tessellation remain in sldkit's `cadmpeg-codec-sldprt 0.5.3+sldkit.4` adapter.
+The backend version identifies this combined pipeline. No foreign Rust types
+are exposed in the public sldkit model.
+
+The partial API preserves the existing bounded partition/deltas merge; it does
+not establish arbitrary topology replacement/deletion or full saved-state
+reconstruction. The strict core `parse_xb`/B-Rep path still accepts the exact
+`SCH_3701229_37102_13006` partition profile and rejects unknown delta base types
+3/4. Partial record recognition does not upgrade that strict status, geometry
+exactness, source trim evidence, or byte coverage. Derived intersection caches
+and pcurves retain their existing classification. See the core's
+[partial-reader contract and provenance](https://docs.rs/crate/parasolid-core/0.1.0-dev6/source/PARTIAL_READERS.md).
+
 ## Entry points
 
 Python exposes `decode_geometry_file` and `decode_geometry_bytes`:
@@ -125,6 +157,31 @@ record ranges are unavailable, all geometry-domain bytes remain unclassified,
 `geometry.byte_partition_incomplete` diagnostic. A location anchor is never
 promoted into a one-byte typed range.
 
+The patched backend also supplies a versioned read ledger. `byte_spans` exposes
+exact field reads with `domain_id`, body-relative `offset` / `byte_len`, reader
+`tag`, domain-local `source_record_id`, classification, and SHA-256. A NURBS
+carrier has separate wrapper, descriptor, and array spans. Overlapping typed
+reads are normalized into `byte_ranges`; the retained complement is explicitly
+`uninterpreted` with reason `not_decoded_by_range_aware_readers`.
+
+Each ledger domain must match independently extracted stream and body hashes,
+schema, description, containing entry, and nested stream offset. Missing,
+duplicate, conflicting, or out-of-bounds spans/domains reject the result with
+`geometry.byte_ledger_invalid`. Unsupported ledger versions or exhausted
+nested extraction budgets leave coverage incomplete. Exact ranges never come
+from the distance between entity anchors.
+
+For a verified ledger, `partition_status=complete`, `typed_bytes` plus
+`uninterpreted_bytes` equals `partition_domain_bytes`, and unclassified bytes
+are zero. **Complete partition means exhaustive byte accounting, not complete
+semantic decoding or exact geometry.** The range-aware readers cover accepted
+analytic carriers, NURBS curves/surfaces and their arrays, topology field reads,
+and the bounded native hierarchy profile below. Other reader families,
+unrecognized records, unused fields, and reserved NURBS float slots remain
+uninterpreted. Entity provenance stays unchanged; native IDs in spans are
+local source IDs, not neutral IR entity IDs.
+
+
 ## Independent geometry validation
 
 Neutral B-Rep reference values can be recorded against
@@ -147,7 +204,111 @@ closed; an export can therefore have different body kinds from the native
 document. Volume and volume-weighted center of mass include explicit solids
 only, while surface area includes sheets. Capture metadata records this scope.
 
+## Numerical NURBS comparison
+
+`scripts/validate_nurbs_geometry.py` compares the native NURBS support carriers
+referenced by a named configuration against STEP B-splines. Run it in a
+validation environment with OCP and the repository's Python development tools:
+
+```sh
+python scripts/validate_nurbs_geometry.py oracle.json fixture-root --output result.json
+```
+
+The [oracle schema](schemas/nurbs-geometry-oracle.schema.json) pins both files'
+SHA-256 and size, configuration, OCP version, explicit native-to-STEP bindings,
+curve reversal, sampling density, and tolerances. STEP indices are one-based
+unique edge/face indices in the pinned OCP import. Every selected native NURBS
+carrier and STEP NURBS edge/face must be bound once. Ambiguous/missing bindings,
+unsupported definitions, invalid hashes, and missing OCP fail the check.
+
+The native evaluator uses homogeneous de Boor evaluation and analytical first
+derivatives in Python. The STEP evaluator uses OCP's B-spline `D1`; shape
+locations are applied by the BRep adaptors. See the official
+[BRepAdaptor_Surface reference](https://occt3d.com/dev/doc/refman/html/class_b_rep_adaptor___surface.html)
+and [Geom_BSplineSurface reference](https://occt3d.com/dev/doc/refman/html/class_geom___b_spline_surface.html).
+The implementation is locally exercised with OCP 7.9.3.1; the online reference
+may describe a newer release.
+
+The report contains pole/knot/normalized-weight differences, sampled point
+positions and first derivatives, per-sample errors, and fixed allowed errors.
+It covers clamped, nonperiodic support curves/surfaces with positive weights and
+C1 continuity at internal knots. Tensor poles use u-major, v-minor order.
+The only orientation adjustment is the curve reversal specified in the oracle;
+no best-fit matching is performed. Near-identical parameter endpoints may be
+affinely mapped within the fixed knot tolerance, with derivative scaling.
+
+This gate does not certify trim curves, pcurves, oriented face normals, areas,
+volumes, watertightness, or a global geometric error bound. It does not change
+parser provenance/exactness flags. OCP remains a validation-only dependency.
+
+## Rectangular NURBS boundary diagnostics
+
+`scripts/validate_nurbs_trim.py` extends a pinned, passing support oracle with
+explicit face/coedge-to-STEP bindings. The
+[trim oracle schema](schemas/nurbs-trim-oracle.schema.json) pins that support
+oracle by hash and size and fixes a UV tolerance before comparison.
+
+```sh
+python scripts/validate_nurbs_trim.py trim-oracle.json fixture-root --output trim.json
+```
+
+This bounded diagnostic accepts one four-edge outer wire per selected NURBS
+face, clamped nonperiodic support, and derived linear isoparametric pcurves.
+Native curve intervals are derived from vertex positions by line projection or
+unique full-support NURBS endpoint matching. Source ranges stay unchanged.
+Present source ranges, alternate use curves, holes, seams, partial NURBS trims,
+and other pcurve parameterizations are rejected until their semantics are
+validated. STEP pcurves must be lines or nonrational two-pole degree-1 splines.
+
+The report separates three gates:
+
+- `derived_boundary_gate_passed`: curve/surface-lift positions, UV coordinates,
+  first tangents per normalized traversal fraction, and closed rectangular
+  boundaries agree at the fixed samples/tolerances.
+- `oriented_trim_gate_passed`: directed edges, cyclic wire order, and face sense
+  agree. Endpoint alignment for the geometry diagnostic is recorded and does
+  not turn reversed traversal into an orientation pass.
+- `source_trim_gate_passed`: remains false for this derived-interval profile;
+  native source trim metadata is not certified by these measurements.
+
+`comparison_completed=true` distinguishes completed measurements from invalid
+inputs or missing dependencies. The CLI returns 1 unless all gates pass, so a
+completed diagnostic can deliberately return 1. No parser flags are upgraded.
+
+The reference pcurves come from OCP's imported STEP B-Rep and may be reconstructed
+during transfer; they are not a SolidWorks API pcurve capture. Wire exploration
+must cover every unique edge. See the official
+[BRepTools_WireExplorer reference](https://occt3d.com/dev/doc/refman/html/class_b_rep_tools___wire_explorer.html)
+and [BRepAdaptor_Curve2d reference](https://occt3d.com/dev/doc/refman/html/class_b_rep_adaptor___curve2d.html).
+Local checks pin OCP 7.9.3.1; the online documentation may describe a newer version.
+These finite samples do not establish a global error bound or oriented normals.
+
 ## Compatibility boundary
+
+The `0.5.3+sldkit.4` backend includes native body/region/shell ownership for the
+verified `SCH_3701229_37102_13006` layout. Native record links distinguish
+solid and sheet bodies; unique `ConfigurationManager` IDs bind named
+configurations to partition bodies even when XML order differs from the IDs.
+A missing partition keeps membership unresolved. The unique saved most-recent
+configuration ID identifies the active state when that source field is present.
+
+The controlled SolidWorks fixture verifies Base with one solid and Derived
+with two solids and one sheet, including separate body topology counts and
+named membership. Other schemas, wire/general bodies, alternate record layouts,
+and hierarchy edits in deltas remain outside this added profile. See the
+[backend patch record](../vendor/cadmpeg-codec-sldprt/PATCHES.md).
+Source location exactness does not imply complete byte-range coverage.
+
+For that same verified native profile, FIN forward/backward links and forward
+(end) vertices are converted to the graph builder's next/previous and start
+vertex convention. Reciprocal FIN pairs, loop links, senses, and vertex joins
+must agree before conversion. This fixes reversed boundary traversal without
+using a STEP export or geometric matching to choose orientation. Invalid or
+unsupported FIN graphs are withheld with `topology.native-fin-unresolved`;
+their independently verified read domains remain in byte accounting.
+The controlled NURBS boundary's four directed uses now agree with STEP.
+Numeric source trim ranges and loop roles remain uncertified; the separate
+source trim gate stays false.
 
 The current profile decodes only modern Part containers. Assemblies, drawings,
 legacy OLE2 geometry, feature-history reconstruction, healing, native writing,

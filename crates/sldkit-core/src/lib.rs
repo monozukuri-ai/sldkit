@@ -16,10 +16,11 @@ pub use drawing::{
     DrawingStructureResult, DrawingStructureSheet, DrawingStructureStatus, DrawingStructureView,
 };
 pub use geometry::{
-    GeometryBody, GeometryByteCoverage, GeometryByteDomain, GeometryByteOffsetBasis,
-    GeometryBytePartitionStatus, GeometryByteStorage, GeometryCarrier, GeometryCarrierDomain,
-    GeometryCoedge, GeometryConfigurationState, GeometryConstruction, GeometryConstructionDomain,
-    GeometryDocument, GeometryEdge, GeometryEntityProvenance, GeometryExactness, GeometryFace,
+    GeometryBody, GeometryByteClassification, GeometryByteCoverage, GeometryByteDomain,
+    GeometryByteOffsetBasis, GeometryBytePartitionStatus, GeometryByteRange, GeometryByteStorage,
+    GeometryCarrier, GeometryCarrierDomain, GeometryCoedge, GeometryConfigurationState,
+    GeometryConstruction, GeometryConstructionDomain, GeometryDecodedSpan, GeometryDocument,
+    GeometryEdge, GeometryEntityProvenance, GeometryExactness, GeometryFace,
     GeometryFidelityReport, GeometryFinding, GeometryLoop, GeometryLoss, GeometryModel,
     GeometryPcurveState, GeometryPcurveUse, GeometryPoint, GeometryRawRecord, GeometryRegion,
     GeometryResult, GeometryShell, GeometrySourceObject, GeometryStatus, GeometryStreamCandidate,

@@ -27,6 +27,93 @@ def canonical(value: dict[str, Any]) -> bytes:
     ).encode()
 
 
+def byte_partition_errors(
+    geometry: dict, bodies: dict[str, bytes] | None = None
+) -> list[str]:
+    """Audit interval algebra independently of Rust; optionally verify read hashes."""
+    fidelity = geometry["fidelity"]
+    coverage = fidelity["byte_coverage"]
+    spans = fidelity.get("byte_spans", [])
+    ranges = fidelity.get("byte_ranges", [])
+    if coverage["partition_status"] != "complete":
+        return (
+            []
+            if not spans and not ranges
+            else ["incomplete ledger has classified ranges"]
+        )
+    domains = {domain["id"]: domain for domain in fidelity.get("byte_domains", [])}
+    errors = []
+    if not domains or len(domains) != len(fidelity["byte_domains"]):
+        errors.append("missing or duplicate domains")
+    for item in [*spans, *ranges]:
+        if item["domain_id"] not in domains:
+            errors.append("unknown range domain")
+    counts = {"typed": 0, "uninterpreted": 0}
+    for identity, domain in domains.items():
+        reads = sorted(
+            (s["offset"], s["offset"] + s["byte_len"])
+            for s in spans
+            if s["domain_id"] == identity and s["classification"] == "typed"
+        )
+        union: list[list[int]] = []
+        for start, end in reads:
+            if union and start <= union[-1][1]:
+                union[-1][1] = max(end, union[-1][1])
+            else:
+                union.append([start, end])
+        cursor = 0
+        typed = []
+        for item in (r for r in ranges if r["domain_id"] == identity):
+            start, length, kind = (
+                item["offset"],
+                item["byte_len"],
+                item["classification"],
+            )
+            if (
+                start != cursor
+                or length <= 0
+                or kind not in counts
+                or not item["reason"]
+            ):
+                errors.append(f"{identity}: invalid partition interval")
+                continue
+            cursor = start + length
+            counts[kind] += length
+            if kind == "typed":
+                typed.append([start, cursor])
+        if cursor != domain["byte_len"] or typed != union:
+            errors.append(
+                f"{identity}: partition does not equal read union plus complement"
+            )
+        for span in (s for s in spans if s["domain_id"] == identity):
+            start, end = span["offset"], span["offset"] + span["byte_len"]
+            if start < 0 or end <= start or end > domain["byte_len"] or not span["tag"]:
+                errors.append(f"{identity}: invalid read interval")
+            if span["classification"] not in counts:
+                errors.append(f"{identity}: invalid read classification")
+            if span["classification"] == "uninterpreted" and any(
+                a < end and start < b for a, b in union
+            ):
+                errors.append(f"{identity}: conflicting read classifications")
+            if (
+                bodies is not None
+                and hashlib.sha256(bodies[identity][start:end]).hexdigest()
+                != span["sha256"]
+            ):
+                errors.append(f"{identity}: read hash mismatch")
+    total = sum(domain["byte_len"] for domain in domains.values())
+    if (
+        counts["typed"] != coverage["typed_bytes"]
+        or counts["uninterpreted"] != coverage["uninterpreted_bytes"]
+        or sum(counts.values()) != total
+        or coverage["partition_domain_bytes"] != total
+        or coverage["classified_active_bytes"] != total
+        or coverage["unclassified_active_bytes"] != 0
+    ):
+        errors.append("partition counters disagree with intervals")
+    return errors
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -412,8 +499,10 @@ def case(path: Path, executable: Path, profile: str) -> tuple[dict[str, Any], bo
         and sum(int(domain["byte_len"]) for domain in byte_domains)
         == byte_coverage["partition_domain_bytes"]
     )
+    partition_errors = byte_partition_errors(geometry)
     byte_coverage_sane = (
-        byte_coverage["source_bytes"] == path.stat().st_size
+        not partition_errors
+        and byte_coverage["source_bytes"] == path.stat().st_size
         and byte_coverage["active_stream_bytes"]
         <= byte_coverage["candidate_stream_bytes"]
         and byte_coverage["classified_active_bytes"]
@@ -487,6 +576,7 @@ def case(path: Path, executable: Path, profile: str) -> tuple[dict[str, Any], bo
         "byte_domains": byte_domains,
         "byte_coverage": byte_coverage,
         "byte_domains_sane": byte_domains_sane,
+        "byte_partition_errors": partition_errors,
         "active_partition_count": active_partition_count,
         "deterministic": deterministic,
         "python_native_json_parity": native_parity,

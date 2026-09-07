@@ -15,6 +15,13 @@ The package has two public implementation layers:
 
 No vendor installation is required at runtime.
 
+The parser depends on the published `parasolid-core` Rust crate for embedded
+headers and shared partial Parasolid record readers. The SolidWorks adapter
+selects streams/configurations, converts source units to public models, and
+retains diagnostics and source provenance. Full schema parsing and the bounded
+partial reader API have separate support contracts; see the
+[current boundary](geometry.md#parasolid-dependency).
+
 The source distribution also carries an optional Windows PowerShell script for
 controlled SolidWorks API validation. It is not imported by either runtime
 layer, is not included in wheels, and does not provide a parser fallback.

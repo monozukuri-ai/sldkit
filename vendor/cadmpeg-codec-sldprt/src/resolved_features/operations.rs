@@ -1,0 +1,440 @@
+//! Boolean operation codes for extrusion, revolution and sweep.
+
+use super::is_class_token;
+use super::scalars::feature_object_name;
+use crate::classification::{classify, FeatureClass};
+use crate::layout::extrusion_sparse_operation_trailer as sparse_tr;
+use crate::records::{Feature, FeatureInputLane, FeatureInputName};
+use cadmpeg_core::decode::View;
+use cadmpeg_ir::features::{BooleanOp, FeatureDefinition};
+use std::collections::HashMap;
+
+pub(crate) const SPLIT_LINE_MODE_PROPERTY: &str = "SplitLineMode";
+pub(crate) const SPLIT_LINE_PROJECTION_MODE: &str = "Projection";
+pub(crate) const SPLIT_LINE_TOOL_PROPERTY: &str = "SplitLineTool";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FormCodePadding {
+    Four,
+    Eight,
+}
+
+impl FormCodePadding {
+    fn bytes(self) -> usize {
+        match self {
+            Self::Four => 4,
+            Self::Eight => 8,
+        }
+    }
+}
+
+pub(crate) fn form_code_padding(sw_version: Option<&str>) -> Option<FormCodePadding> {
+    let version = sw_version?.parse::<u32>().ok()?;
+    (version > 0).then_some(if version >= 12_000 {
+        FormCodePadding::Eight
+    } else {
+        FormCodePadding::Four
+    })
+}
+
+pub(super) fn repeated_class_token(payload: &[u8], name_offset: usize) -> Option<u16> {
+    let start = name_offset.checked_sub(2)?;
+    View::u16_le_at(payload, start)
+}
+
+pub(super) fn feature_operation_code(
+    lane: &FeatureInputLane,
+    name: &FeatureInputName,
+    class: Option<&str>,
+    form_padding: Option<FormCodePadding>,
+) -> Option<u32> {
+    let name_offset = usize::try_from(name.offset).ok()?;
+    let direct_class = lane
+        .classes
+        .iter()
+        .find(|class| class.offset + 6 + class.name.len() as u64 == name.offset);
+    let code_offset = if let Some(class) = direct_class {
+        let class_offset = usize::try_from(class.offset).ok()?;
+        if lane
+            .native_payload
+            .get(class_offset.checked_sub(4)?..class_offset)
+            == Some(&[0xff; 4])
+        {
+            return Some(u32::MAX);
+        }
+        let candidates = [8usize, 4]
+            .into_iter()
+            .filter(|padding| form_padding.is_none_or(|expected| expected.bytes() == *padding))
+            .filter_map(|padding| {
+                let code_offset = class_offset.checked_sub(4 + padding)?;
+                if !lane
+                    .native_payload
+                    .get(code_offset + 4..class_offset)?
+                    .iter()
+                    .all(|byte| *byte == 0)
+                {
+                    return None;
+                }
+                let code = View::u32_le_at(&lane.native_payload, code_offset)?;
+                Some((code_offset, code))
+            })
+            .collect::<Vec<_>>();
+        if form_padding.is_none() {
+            // A zero form code makes four- and eight-byte padding both match. A
+            // different candidate code is not a byte-level discriminator.
+            match candidates.as_slice() {
+                [(code_offset, _)] => *code_offset,
+                [(first_offset, first_code), (_, second_code)] if first_code == second_code => {
+                    *first_offset
+                }
+                _ => return None,
+            }
+        } else {
+            candidates.first().map(|(code_offset, _)| *code_offset)?
+        }
+    } else {
+        let repeated_token = repeated_class_token(&lane.native_payload, name_offset)?;
+        if !is_class_token(repeated_token) {
+            return None;
+        }
+        let compact_instance = name_offset.checked_sub(14).filter(|code_offset| {
+            repeated_token == 0x8000
+                && lane.native_payload.get(code_offset + 4..code_offset + 8) == Some(&[0; 4])
+        });
+        compact_instance.or_else(|| {
+            let paddings: &[usize] = if class == Some("moICE_c") {
+                &[8, 4, 0]
+            } else {
+                &[8, 4]
+            };
+            paddings.iter().copied().find_map(|padding| {
+                if padding != 0 && form_padding.is_some_and(|expected| expected.bytes() != padding)
+                {
+                    return None;
+                }
+                let code_offset = name_offset.checked_sub(6 + padding)?;
+                lane.native_payload
+                    .get(code_offset + 4..name_offset - 2)?
+                    .iter()
+                    .all(|byte| *byte == 0)
+                    .then_some(code_offset)
+            })
+        })?
+    };
+    View::u32_le_at(&lane.native_payload, code_offset)
+}
+
+pub(super) fn revolution_operation(class: Option<&str>, code: u32) -> Option<BooleanOp> {
+    match (class, code) {
+        (Some("moRevolution_c"), 5 | 6 | 11 | 60 | 20_322 | 22_016) => Some(BooleanOp::NewBody),
+        (Some("moRevolution_c"), 8) => Some(BooleanOp::Join),
+        (Some("moRevCut_c"), _) => Some(BooleanOp::Cut),
+        _ => None,
+    }
+}
+
+pub(super) fn extrusion_operation(class: Option<&str>, code: u32) -> Option<BooleanOp> {
+    match (class, code) {
+        (Some("moExtrusion_c"), 1 | 4 | 82) | (Some("moICE_c"), 6 | 21 | 0x3ee4_f8b5) | (_, 3) => {
+            Some(BooleanOp::Join)
+        }
+        (Some("moICE_c"), 0 | 1 | 2 | 5 | 7 | 10 | 14 | 15 | 22_993 | u32::MAX) => {
+            Some(BooleanOp::Cut)
+        }
+        _ => None,
+    }
+}
+
+/// Project revolution Boolean form words from declared and compact objects.
+pub(crate) fn bind_revolution_operations(
+    features: &mut [cadmpeg_ir::features::Feature],
+    histories: &[crate::records::FeatureHistory],
+    lanes: &[FeatureInputLane],
+    form_padding: Option<FormCodePadding>,
+) {
+    let history_features = histories
+        .iter()
+        .flat_map(|history| &history.features)
+        .map(|feature| (feature.id.as_str(), feature))
+        .collect::<HashMap<_, _>>();
+    for feature in features {
+        let FeatureDefinition::Revolve { op, .. } = &mut feature.definition else {
+            continue;
+        };
+        if *op != BooleanOp::Unresolved {
+            continue;
+        }
+        let Some(history) = feature
+            .native_ref
+            .as_deref()
+            .and_then(|native| history_features.get(native).copied())
+        else {
+            continue;
+        };
+        let mut operations = lanes.iter().filter_map(|lane| {
+            let name = feature_object_name(history, lane)?;
+            revolution_operation(
+                history.input_class.as_deref(),
+                feature_operation_code(lane, name, history.input_class.as_deref(), form_padding)?,
+            )
+        });
+        let Some(first) = operations.next() else {
+            continue;
+        };
+        if operations.all(|operation| operation == first) {
+            *op = first;
+        }
+    }
+}
+
+/// Project compact solid-sweep Boolean operation discriminators.
+pub(crate) fn bind_sweep_operations(
+    features: &mut [cadmpeg_ir::features::Feature],
+    histories: &[crate::records::FeatureHistory],
+    lanes: &[FeatureInputLane],
+    form_padding: Option<FormCodePadding>,
+) {
+    let history_features = histories
+        .iter()
+        .flat_map(|history| &history.features)
+        .map(|feature| (feature.id.as_str(), feature))
+        .collect::<HashMap<_, _>>();
+    for feature in features {
+        let FeatureDefinition::Sweep {
+            mode: cadmpeg_ir::features::SweepMode::Solid { op },
+            ..
+        } = &mut feature.definition
+        else {
+            continue;
+        };
+        if *op != BooleanOp::Unresolved {
+            continue;
+        }
+        let Some(history) = feature
+            .native_ref
+            .as_deref()
+            .and_then(|native| history_features.get(native).copied())
+        else {
+            continue;
+        };
+        let mut operations = lanes.iter().filter_map(|lane| {
+            let name = feature_object_name(history, lane)?;
+            match (
+                history.input_class.as_deref(),
+                feature_operation_code(lane, name, history.input_class.as_deref(), form_padding)?,
+            ) {
+                (Some("moSweep_c"), 15) => Some(BooleanOp::Join),
+                _ => None,
+            }
+        });
+        let Some(first) = operations.next() else {
+            continue;
+        };
+        if operations.all(|operation| operation == first) {
+            *op = first;
+        }
+    }
+}
+
+/// Inline extrusion trailer fields: the family word and operation byte.
+pub(super) fn feature_inline_operation_fields(
+    lane: &FeatureInputLane,
+    name: &FeatureInputName,
+) -> Option<(u16, u8)> {
+    let name_offset = usize::try_from(name.offset).ok()?;
+    let name_bytes = name.value.encode_utf16().count().checked_mul(2)?;
+    let trailer = name_offset.checked_add(6 + name_bytes)?;
+    let bytes = lane.native_payload.get(trailer..trailer + 19)?;
+    let terminated = bytes[sparse_tr::SPARSE_ZERO_PREFIX..19] == [0xff, 0xfe, 0xff]
+        || lane
+            .native_payload
+            .get(trailer + sparse_tr::SPARSE_ZERO_PREFIX..trailer + sparse_tr::LEN)
+            .is_some_and(|suffix| {
+                (suffix[..sparse_tr::SPARSE_MARKER - sparse_tr::SPARSE_ZERO_PREFIX] == [0; 6]
+                    && suffix[sparse_tr::SPARSE_MARKER - sparse_tr::SPARSE_ZERO_PREFIX
+                        ..sparse_tr::FIRST_TOKEN - sparse_tr::SPARSE_ZERO_PREFIX]
+                        == [1, 0]
+                    && suffix[sparse_tr::FIRST_TOKEN - sparse_tr::SPARSE_ZERO_PREFIX
+                        ..sparse_tr::OPTIONAL_IDENTITY - sparse_tr::SPARSE_ZERO_PREFIX]
+                        != [0, 0]
+                    && suffix[sparse_tr::OPTIONAL_IDENTITY - sparse_tr::SPARSE_ZERO_PREFIX
+                        ..sparse_tr::ZERO_BEFORE_FINAL_TOKEN - sparse_tr::SPARSE_ZERO_PREFIX]
+                        != [0xff; 4]
+                    && suffix[sparse_tr::ZERO_BEFORE_FINAL_TOKEN - sparse_tr::SPARSE_ZERO_PREFIX
+                        ..sparse_tr::FINAL_TOKEN - sparse_tr::SPARSE_ZERO_PREFIX]
+                        == [0; 8]
+                    && suffix[sparse_tr::FINAL_TOKEN - sparse_tr::SPARSE_ZERO_PREFIX..] != [0, 0])
+                    || (suffix[..4] == [0, 0, 1, 0]
+                        && suffix[4..8] != [0; 4]
+                        && suffix[8..18] == [0; 10]
+                        && suffix[18..20] != [0, 0]
+                        && suffix[20..24] == [0; 4])
+            });
+    if bytes[sparse_tr::ZERO_HEADER..sparse_tr::FAMILY] != [0; 4]
+        || bytes[sparse_tr::OBJECT_ID..sparse_tr::ZERO_AFTER_OBJECT]
+            != name.object_id?.to_le_bytes()
+        || bytes[sparse_tr::ZERO_AFTER_OBJECT..sparse_tr::SPARSE_ZERO_PREFIX] != [0; 4]
+        || !terminated
+        || !matches!(bytes[sparse_tr::OPERATION], 0 | 2)
+    {
+        return None;
+    }
+    Some((
+        View::u16_le_at(bytes, sparse_tr::FAMILY)?,
+        bytes[sparse_tr::OPERATION],
+    ))
+}
+
+/// Project an inline Boolean operation from a recognized complete family.
+pub(super) fn feature_inline_operation(
+    lane: &FeatureInputLane,
+    name: &FeatureInputName,
+) -> Option<BooleanOp> {
+    match feature_inline_operation_fields(lane, name)? {
+        (0x0140, 0) => Some(BooleanOp::Join),
+        (0x01ca, 0 | 2) => Some(BooleanOp::Cut),
+        _ => None,
+    }
+}
+
+/// Project the feature-input operation discriminator onto typed extrusions.
+pub(crate) fn bind_extrusion_operations(
+    features: &mut [cadmpeg_ir::features::Feature],
+    histories: &[crate::records::FeatureHistory],
+    lanes: &[FeatureInputLane],
+    form_padding: Option<FormCodePadding>,
+) {
+    let history_features = histories
+        .iter()
+        .flat_map(|history| &history.features)
+        .collect::<Vec<_>>();
+    let history_by_id = history_features
+        .iter()
+        .map(|feature| (feature.id.as_str(), *feature))
+        .collect::<HashMap<_, _>>();
+    for feature in features {
+        let FeatureDefinition::Extrude { op, .. } = &mut feature.definition else {
+            continue;
+        };
+        if *op != BooleanOp::Unresolved {
+            continue;
+        }
+        let Some(history) = feature
+            .native_ref
+            .as_deref()
+            .and_then(|native| history_by_id.get(native).copied())
+        else {
+            continue;
+        };
+        let mut operations = lanes.iter().filter_map(|lane| {
+            let name = feature_object_name(history, lane)?;
+            if let Some(operation) = feature_inline_operation(lane, name) {
+                return Some(operation);
+            }
+            extrusion_operation(
+                history.input_class.as_deref(),
+                feature_operation_code(lane, name, history.input_class.as_deref(), form_padding)?,
+            )
+        });
+        let Some(first) = operations.next() else {
+            continue;
+        };
+        if operations.all(|operation| operation == first) {
+            *op = first;
+        }
+    }
+}
+
+/// Establish projected split-line mode and source sketch from each
+/// `moPLine_c` feature-input object while native dimension values remain raw.
+pub(crate) fn enrich_history_split_lines(
+    histories: &mut [crate::records::FeatureHistory],
+    lanes: &[FeatureInputLane],
+) {
+    let features = histories
+        .iter()
+        .flat_map(|history| &history.features)
+        .collect::<Vec<_>>();
+    let mut observations = HashMap::<String, (bool, bool)>::new();
+    for lane in lanes {
+        let mut objects = features
+            .iter()
+            .filter_map(|feature| Some((feature_object_name(feature, lane)?.offset, *feature)))
+            .collect::<Vec<_>>();
+        objects.sort_unstable_by_key(|(offset, _)| *offset);
+        for (index, (start, feature)) in objects.iter().enumerate() {
+            if feature.input_class.as_deref() != Some("moPLine_c") {
+                continue;
+            }
+            let end = objects
+                .get(index + 1)
+                .map_or(lane.native_payload.len() as u64, |(offset, _)| *offset);
+            let project_classes = lane
+                .classes
+                .iter()
+                .filter(|class| {
+                    class.name == "moPLineProject_c" && class.offset >= *start && class.offset < end
+                })
+                .count();
+            let observation = observations.entry(feature.id.clone()).or_default();
+            if project_classes == 1 {
+                observation.0 = true;
+            } else {
+                observation.1 = true;
+            }
+        }
+    }
+    let tools = histories
+        .iter()
+        .flat_map(|history| {
+            history.features.iter().filter_map(|feature| {
+                (observations.get(&feature.id) == Some(&(true, false)))
+                    .then(|| split_line_source_sketch(feature, &history.features))
+                    .flatten()
+                    .map(|tool| (feature.id.clone(), tool.id.clone()))
+            })
+        })
+        .collect::<HashMap<_, _>>();
+    for feature in histories
+        .iter_mut()
+        .flat_map(|history| &mut history.features)
+    {
+        if observations.get(&feature.id) == Some(&(true, false)) {
+            feature.properties.insert(
+                SPLIT_LINE_MODE_PROPERTY.into(),
+                SPLIT_LINE_PROJECTION_MODE.into(),
+            );
+            if let Some(tool) = tools.get(&feature.id) {
+                feature
+                    .properties
+                    .insert(SPLIT_LINE_TOOL_PROPERTY.into(), tool.clone());
+            }
+        }
+    }
+}
+
+fn split_line_source_sketch<'a>(
+    feature: &Feature,
+    history_features: &'a [Feature],
+) -> Option<&'a Feature> {
+    if feature.parameters.is_empty() {
+        return None;
+    }
+    let source = feature.source_id.as_deref()?.parse::<u32>().ok()?;
+    let mut candidates = history_features.iter().filter(|candidate| {
+        candidate.parent == feature.parent
+            && classify(candidate) == Some(FeatureClass::Sketch)
+            && candidate.input_class.as_deref() == Some("moProfileFeature_c")
+            && candidate.parameters == feature.parameters
+            && candidate
+                .source_id
+                .as_deref()
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some_and(|candidate_source| candidate_source > 0 && candidate_source < source)
+    });
+    let tool = candidates.next()?;
+    candidates.next().is_none().then_some(tool)
+}
+
+#[cfg(test)]
+mod operations_tests;

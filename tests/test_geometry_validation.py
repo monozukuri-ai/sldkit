@@ -1,10 +1,113 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import runpy
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+
+def _partition_fixture():
+    body = b"0123456789"
+    spans = [
+        {
+            "domain_id": "d",
+            "offset": a,
+            "byte_len": b - a,
+            "classification": "typed",
+            "tag": "field",
+            "sha256": hashlib.sha256(body[a:b]).hexdigest(),
+        }
+        for a, b in [(2, 5), (4, 7)]
+    ]
+    ranges = [
+        {
+            "domain_id": "d",
+            "offset": a,
+            "byte_len": b - a,
+            "classification": c,
+            "reason": "reader",
+        }
+        for a, b, c in [
+            (0, 2, "uninterpreted"),
+            (2, 7, "typed"),
+            (7, 10, "uninterpreted"),
+        ]
+    ]
+    geometry = {
+        "fidelity": {
+            "byte_domains": [{"id": "d", "byte_len": 10}],
+            "byte_spans": spans,
+            "byte_ranges": ranges,
+            "byte_coverage": {
+                "partition_status": "complete",
+                "typed_bytes": 5,
+                "uninterpreted_bytes": 5,
+                "partition_domain_bytes": 10,
+                "classified_active_bytes": 10,
+                "unclassified_active_bytes": 0,
+            },
+        }
+    }
+    return geometry, {"d": body}
+
+
+def test_byte_partition_independently_checks_union_complement_and_hashes():
+    validate = _namespace()["byte_partition_errors"]
+    geometry, bodies = _partition_fixture()
+    assert validate(geometry, bodies) == []
+    for field, value in [
+        ("offset", 3),
+        ("byte_len", 0),
+        ("sha256", "bad"),
+        ("domain_id", "missing"),
+    ]:
+        damaged = copy.deepcopy(geometry)
+        damaged["fidelity"]["byte_spans"][0][field] = value
+        assert validate(damaged, bodies), field
+    for field, value in [("offset", 1), ("byte_len", 4), ("classification", "typed")]:
+        damaged = copy.deepcopy(geometry)
+        damaged["fidelity"]["byte_ranges"][0][field] = value
+        assert validate(damaged, bodies), field
+    damaged = copy.deepcopy(geometry)
+    damaged["fidelity"]["byte_spans"][1]["classification"] = "uninterpreted"
+    assert validate(damaged, bodies)
+
+
+def test_byte_partition_public_models_round_trip_and_accept_older_fidelity():
+    import sldkit
+
+    geometry, _ = _partition_fixture()
+    span = geometry["fidelity"]["byte_spans"][0] | {"source_record_id": 42}
+    interval = geometry["fidelity"]["byte_ranges"][0]
+    assert sldkit.GeometryDecodedSpan.from_dict(span).to_dict() == span
+    assert sldkit.GeometryByteRange.from_dict(interval).to_dict() == interval
+    old = {
+        "decoder": "test",
+        "decoder_version": "0",
+        "geometry_transferred": False,
+        "entity_counts": {},
+        "losses": [],
+        "validation_findings": [],
+        "byte_coverage": {
+            "source_bytes": 0,
+            "candidate_stream_bytes": 0,
+            "active_stream_bytes": 0,
+            "partition_domain_bytes": 0,
+            "retained_record_bytes": 0,
+            "located_entity_count": 0,
+            "unique_location_count": 0,
+            "classified_active_bytes": 0,
+            "unclassified_active_bytes": 0,
+            "partition_status": "incomplete",
+            "typed_bytes": None,
+            "uninterpreted_bytes": None,
+        },
+    }
+    model = sldkit.GeometryFidelityReport.from_dict(old)
+    assert model.byte_spans == model.byte_ranges == ()
+    assert model.to_dict() == old
 
 
 def _namespace() -> dict:

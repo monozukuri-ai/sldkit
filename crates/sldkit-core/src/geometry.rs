@@ -460,6 +460,36 @@ pub struct GeometryByteCoverage {
     pub uninterpreted_bytes: Option<u64>,
 }
 
+/// Meaning of one byte interval; independent of model exactness.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryByteClassification {
+    Typed,
+    Uninterpreted,
+}
+
+/// A decoder-confirmed field read, scoped to one exact nested byte domain.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GeometryDecodedSpan {
+    pub domain_id: String,
+    pub offset: u64,
+    pub byte_len: u64,
+    pub classification: GeometryByteClassification,
+    pub tag: String,
+    pub source_record_id: Option<u16>,
+    pub sha256: String,
+}
+
+/// One interval of an exhaustive, non-overlapping body-byte partition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GeometryByteRange {
+    pub domain_id: String,
+    pub offset: u64,
+    pub byte_len: u64,
+    pub classification: GeometryByteClassification,
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GeometryFidelityReport {
     pub decoder: String,
@@ -469,6 +499,12 @@ pub struct GeometryFidelityReport {
     pub entity_counts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub byte_domains: Vec<GeometryByteDomain>,
+    /// Exact decoder reads; spans may overlap within a domain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub byte_spans: Vec<GeometryDecodedSpan>,
+    /// Typed unions and retained complements, separate for each domain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub byte_ranges: Vec<GeometryByteRange>,
     pub byte_coverage: GeometryByteCoverage,
     #[serde(default)]
     pub losses: Vec<GeometryLoss>,

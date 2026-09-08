@@ -223,6 +223,62 @@ def test_geometry_strict_mode_retains_partial_result():
     assert caught.value.result.status is sldkit.GeometryStatus.PARTIAL
 
 
+def display_list_payload() -> bytes:
+    """One source-less display triangle, independent of a Parasolid body."""
+
+    def channel(width: int, kind: int, count: int, data: bytes) -> bytes:
+        return struct.pack("<4I", width, kind, 2, count) + data
+
+    return b"".join(
+        (
+            b"uoTempFaceTessData_c",
+            struct.pack("<2I", 1, 1),
+            channel(4, 8, 1, struct.pack("<I", 3)),
+            channel(12, 100, 3, struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)),
+            channel(12, 100, 3, struct.pack("<9f", 0, 0, 1, 0, 0, 1, 0, 0, 1)),
+            channel(4, 8, 4, bytes(16)),
+            channel(4, 8, 1, struct.pack("<I", 4)),
+            channel(1, 8, 4, bytes(4)),
+        )
+    )
+
+
+@pytest.mark.parametrize("truncated", [False, True])
+def test_geometry_display_cache_without_brep(truncated):
+    display = display_list_payload()
+    if truncated:
+        display = display[: len(display) // 2]
+    payload = part_file() + modern_frame("Contents/DisplayLists", display)
+    result = sldkit.decode_geometry_bytes(payload, filename="cache.SLDPRT")
+    native = json.loads(
+        _core.decode_geometry_bytes_json(payload, "cache.SLDPRT", "desktop")
+    )
+    assert result.to_dict() == native
+    assert sldkit.GeometryResult.from_dict(native) == result
+    assert result.status is sldkit.GeometryStatus.PARTIAL
+    assert result.geometry is not None
+    assert result.geometry.fidelity.geometry_transferred is False
+    assert result.geometry.model.bodies == ()
+    assert result.geometry.model.faces == ()
+    meshes = result.geometry.model.tessellations
+    assert len(meshes) == (0 if truncated else 1)
+    codes = {d.code for d in result.diagnostics}
+    assert "geometry.not_transferred" in codes
+    assert ("geometry.display_cache_transferred" in codes) is not truncated
+    if not truncated:
+        mesh = meshes[0]
+        assert mesh.vertices == ((0, 0, 0), (1000, 0, 0), (0, 1000, 0))
+        assert mesh.triangles == ((0, 1, 2),)
+        assert mesh.normals == ((0, 0, 1),) * 3
+        assert mesh.body_id is None
+        assert mesh.face_ids == ()
+        assert mesh.provenance.stream == "Contents/DisplayLists"
+        assert len(mesh.channels) == 6
+        with pytest.raises(sldkit.GeometryError) as caught:
+            sldkit.decode_geometry_bytes(payload, filename="cache.SLDPRT", strict=True)
+        assert caught.value.result.geometry.model.tessellations == meshes
+
+
 def test_geometry_rejects_non_part_document_kind():
     result = sldkit.decode_geometry_bytes(assembly_file(), filename="fixture.SLDASM")
 

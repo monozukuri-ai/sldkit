@@ -17,6 +17,7 @@
 /corpus/external/
 /designs/
 /reference/
+/viewer/node_modules/
 
 # Local validation records and tools that are not part of the public project.
 /scripts/capture_solidworks_ground_truth.ps1

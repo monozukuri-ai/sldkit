@@ -236,6 +236,17 @@ pub(crate) fn decode(
             DiagnosticKind::Unsupported,
             "no Parasolid body stream produced a typed B-Rep topology graph",
         ));
+        if !model.tessellations.is_empty() {
+            diagnostics.push(Diagnostic::new(
+                "geometry.display_cache_transferred",
+                DiagnosticSeverity::Info,
+                DiagnosticKind::Preserved,
+                format!(
+                    "{} saved display mesh(es) were transferred independently of B-Rep; body, face, and configuration ownership remains unresolved",
+                    model.tessellations.len()
+                ),
+            ));
+        }
     } else if status == GeometryStatus::Partial {
         diagnostics.push(Diagnostic::new(
             "geometry.partial",

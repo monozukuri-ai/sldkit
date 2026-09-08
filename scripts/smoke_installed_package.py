@@ -10,6 +10,7 @@ from importlib import metadata
 from pathlib import Path
 
 import sldkit
+from sldkit.viewer import view_file, write_html
 
 OLE2_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
 MODERN_MARKER = bytes.fromhex("140006000800")
@@ -165,6 +166,13 @@ with tempfile.TemporaryDirectory() as directory:
     resource_file = sldkit.extract_resource_file(preview_path, resource)
     assert resource_file.result.status is sldkit.ExtractionStatus.EXTRACTED
     assert resource_file.data == preview
+    viewer_path = view_file(preview_path)
+    viewer_html = viewer_path.read_text(encoding="utf-8")
+    assert 'id="sldkit-scene"' in viewer_html
+    assert "data:image/png;base64," in viewer_html
+    assert "Three.js 0.180.0" in viewer_html
+    assert "Permission is hereby granted" in viewer_html
+    write_html(geometry, project_root / "geometry.html")
     assembly_path = project_root / "root.SLDASM"
     part_path = project_root / "child.SLDPRT"
     assembly_path.write_bytes(

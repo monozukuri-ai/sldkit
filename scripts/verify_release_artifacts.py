@@ -63,6 +63,11 @@ def _check_wheel(path: Path) -> None:
         assert any(name.endswith("/WHEEL") for name in names), path
         assert any(name.endswith("sldkit/py.typed") for name in names), path
         assert any(name.endswith("sldkit/_core.pyi") for name in names), path
+        for asset in ("viewer.html", "viewer.css", "viewer.js", "three-LICENSE.txt"):
+            assert f"sldkit/viewer/_assets/{asset}" in names, (path, asset)
+        assert any(
+            name.endswith("licenses/LICENSES/three-MIT.txt") for name in names
+        ), path
         assert any(name.endswith("licenses/LICENSE") for name in names), path
         assert any(
             name.endswith("licenses/LICENSES/Apache-2.0.txt") for name in names
@@ -141,6 +146,12 @@ def _check_sdist(path: Path) -> None:
     assert "docs/architecture.md" in normalized, path
     assert "docs/compatibility.md" in normalized, path
     assert "docs/geometry.md" in normalized, path
+    assert "docs/viewer.md" in normalized, path
+    for asset in ("viewer.html", "viewer.css", "viewer.js", "three-LICENSE.txt"):
+        assert f"python/sldkit/viewer/_assets/{asset}" in normalized, (path, asset)
+    assert "viewer/src/viewer.js" in normalized, path
+    assert "viewer/package-lock.json" in normalized, path
+    assert "LICENSES/three-MIT.txt" in normalized, path
     assert "docs/drawing-structure.md" in normalized, path
     assert "docs/drawing-validation.md" in normalized, path
     assert "docs/schemas/drawing-ground-truth.schema.json" in normalized, path

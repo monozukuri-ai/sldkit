@@ -19,6 +19,7 @@ as a typed Python package through PyO3.
 | ZIP/OPC document semantics | Unsupported |
 | Feature history, mates, and occurrence transforms | Unsupported |
 | Drawing entities, dimensions, and view transforms | Unsupported |
+| Offline HTML viewer | Recovered Part meshes, saved previews, and parse diagnostics |
 
 The package returns structured diagnostics and byte coverage. Missing,
 unsupported, malformed, and inferred source data are not collapsed into empty
@@ -119,10 +120,34 @@ Parasolid headers and shared partial topology/geometry readers. No Python `paras
 checkout is required. See the [migration boundary](docs/geometry.md#parasolid-dependency).
 
 `sldkit` owns SolidWorks-specific parsing and source models. It does not depend
-on `cad3d-ir`, CadQuery, Open CASCADE, a vendor SDK, COM, or a viewer. A separate
+on `cad3d-ir`, CadQuery, Open CASCADE, a vendor SDK, or COM. The opt-in Python
+viewer consumes public results and bundles Three.js for browser rendering. A separate
 adapter can depend on both `sldkit` and a downstream interchange model.
 The source distribution's optional SolidWorks capture script is controlled
 validation tooling; it is not imported by the package or included in wheels.
+
+## Offline viewer
+
+```bash
+sldkit view part.SLDPRT --output preview.html
+sldkit view drawing.SLDDRW --output drawing.html --open
+```
+
+Open the generated HTML in a WebGL2-capable browser. JavaScript, meshes, and
+available saved previews are embedded; no server, CDN, or Node.js installation
+is needed to use it. Existing output requires `--force`.
+
+```python
+from sldkit import decode_geometry_file
+from sldkit.viewer import write_html
+
+result = decode_geometry_file("part.SLDPRT")
+write_html(result, "preview.html", title="My part")
+```
+
+The viewer displays only recovered meshes. A partial result may have incomplete
+or no geometry; saved images are labeled separately. Assembly placement and
+Drawing entity rendering remain unsupported. See [viewer behavior](docs/viewer.md).
 
 ## Development
 

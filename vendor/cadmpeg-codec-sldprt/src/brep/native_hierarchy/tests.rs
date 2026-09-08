@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified by sldkit; see the crate-root PATCHES.md.
 //! Synthetic record graphs; no private CAD geometry is embedded here.
 #![allow(clippy::unwrap_used)]
 
@@ -105,9 +106,8 @@ fn fixture() -> (Vec<u8>, Tables, Vec<usize>) {
     (data, tables, body_starts)
 }
 
-#[test]
-fn decoded_graph_keeps_native_sheet_ids_and_explicit_source_annotations() {
-    use crate::{brep, parasolid, test_support};
+fn native_sheet_body() -> Vec<u8> {
+    use crate::{brep, test_support};
     let (mut data, _, starts) = fixture();
     data.truncate(starts[1] - 2);
     u16_at(&mut data, starts[0] + 42, 1);
@@ -152,6 +152,13 @@ fn decoded_graph_keeps_native_sheet_ids_and_explicit_source_annotations() {
         ));
     }
     data.extend(triangle);
+    data
+}
+
+#[test]
+fn decoded_graph_keeps_native_sheet_ids_and_explicit_source_annotations() {
+    use crate::{brep, parasolid, test_support};
+    let data = native_sheet_body();
     let stream = test_support::parasolid_with_body("partition body", SCHEMA, &data);
     let header = parasolid::stream_header(&stream).unwrap();
     let decoded = brep::decode_bodies(&[(&stream, &header)], "test-partition");
@@ -176,4 +183,35 @@ fn decoded_graph_keeps_native_sheet_ids_and_explicit_source_annotations() {
             cadmpeg_ir::Exactness::ByteExact
         );
     }
+}
+
+#[test]
+fn rejected_native_fin_graph_keeps_display_cache_and_failure_reason() {
+    use crate::{brep, test_support::*, SldprtCodec};
+    use cadmpeg_ir::codec::{Codec, DecodeOptions};
+
+    let mut body = native_sheet_body();
+    let tables =
+        brep::topology::scan_with_curve_attrs(&body, &std::collections::HashSet::default());
+    // The forward endpoint cannot resolve to a vertex. Keep every other link.
+    let forward_vertex = tables.coedges[&30].offset + 2 + 2 + 4 * 2;
+    u16_at(&mut body, forward_vertex, 1);
+    let stream = parasolid_with_body("partition body", SCHEMA, &body);
+    let mut source = outer_header();
+    source.extend(make_block(0x20, "Contents/Config-0-Partition", &stream));
+    source.extend(make_block(
+        0x41,
+        "Contents/DisplayLists",
+        &display_list_payload(),
+    ));
+    let decoded = SldprtCodec
+        .decode(&mut std::io::Cursor::new(source), &DecodeOptions::default())
+        .unwrap();
+    assert!(!decoded.report().geometry_transferred);
+    assert!(decoded.ir().model.bodies.is_empty());
+    assert!(decoded.ir().model.faces.is_empty());
+    assert_eq!(decoded.ir().model.tessellations.len(), 1);
+    assert!(decoded.report().losses.iter().any(|loss| loss
+        .message
+        .starts_with("6 native FIN record(s) were withheld")));
 }

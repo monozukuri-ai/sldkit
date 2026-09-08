@@ -26,3 +26,7 @@ are included in [`parasolid-core-MIT.txt`](parasolid-core-MIT.txt).
 The adopted partial-reader files in parasolid-core remain Apache-2.0 licensed;
 its `PARTIAL_READERS.md` records their origin and modifications. The Apache text
 above covers those readers as well as the retained cadmpeg adapter.
+
+The offline HTML viewer bundles Three.js 0.180.0 (MIT), including OrbitControls,
+from <https://github.com/mrdoob/three.js/tree/r180>. Its license is in
+[`three-MIT.txt`](three-MIT.txt) and is also embedded in generated HTML.

@@ -15,6 +15,11 @@ The package has two public implementation layers:
 
 No vendor installation is required at runtime.
 
+The opt-in `sldkit.viewer` module is a downstream consumer of these public Python
+results. It writes standalone HTML with bundled Three.js assets; the parser and
+package-root API do not import the viewer. No Python runtime dependencies or
+geometry kernel are added. See [offline viewer](viewer.md).
+
 The parser depends on the published `parasolid-core` Rust crate for embedded
 headers and shared partial Parasolid record readers. The SolidWorks adapter
 selects streams/configurations, converts source units to public models, and

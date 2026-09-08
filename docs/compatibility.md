@@ -18,6 +18,7 @@ parsed.
 | Project scanning | Bounded dependency graph for decoded Part, Assembly, and Drawing references |
 | Python API | Typed models corresponding to the Rust JSON contract |
 | Command-line interface | Probe, inspect, extract, parse, geometry, Drawing structure, and project scan operations |
+| Python HTML viewer | Recovered triangle meshes with camera and visibility controls, bounded saved PNG/DIB previews, and parse diagnostics; no geometry reconstruction |
 
 Modern parsing is limited to observed layouts. Internal version values are
 evidence attached to an input, not a promise that every file from a product year

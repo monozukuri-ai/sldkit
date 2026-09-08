@@ -53,6 +53,11 @@ module-name = "sldkit._core"
 bindings = "pyo3"
 include = [
     { path = "docs/**/*", format = "sdist" },
+    { path = "viewer/package.json", format = "sdist" },
+    { path = "viewer/package-lock.json", format = "sdist" },
+    { path = "viewer/build.mjs", format = "sdist" },
+    { path = "viewer/src/**/*", format = "sdist" },
+    { path = "python/sldkit/viewer/_assets/*", format = ["sdist", "wheel"] },
     { path = "scripts/capture_drawing_ground_truth.ps1", format = "sdist" },
     { path = "scripts/compare_drawing_structures.py", format = "sdist" },
     { path = "scripts/capture_step_geometry.py", format = "sdist" },
@@ -64,6 +69,7 @@ exclude = [
     "reference/**",
     "corpus/**",
     "designs/**",
+    "viewer/node_modules/**",
 ]
 
 [tool.pytest.ini_options]

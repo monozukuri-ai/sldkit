@@ -316,3 +316,13 @@ and downstream common-IR conversion are outside this API. Geometry results can
 be `partial` even when topology is useful—for example, when body hierarchy is
 derived, tessellation face ownership is unresolved, or a carrier remains
 untyped.
+
+Saved DisplayLists meshes are also transferred when B-Rep decoding fails or
+no Parasolid body stream is present. Such results remain `partial`, with
+`fidelity.geometry_transferred=false` (this flag describes B-Rep transfer).
+`geometry.not_transferred` retains the B-Rep diagnostic, while
+`geometry.display_cache_transferred` reports that saved meshes are available.
+Unresolved native FIN diagnostics are retained even when no B-Rep survives.
+Mesh vertices, triangles, normals, native channels, appearance bindings, and
+source provenance use the same reader as the B-Rep success path. Body/face
+references and configuration ownership remain unresolved when B-Rep is absent.

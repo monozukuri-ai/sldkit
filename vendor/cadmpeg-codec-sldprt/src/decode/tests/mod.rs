@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified by sldkit; see the crate-root PATCHES.md.
 //! Design-loss and geometry-report tests for SLDPRT decode.
 
 mod admission;
@@ -8,6 +9,7 @@ mod configuration_completeness;
 mod configuration_sites;
 mod curves_and_loops;
 mod design_completeness;
+mod display_fallback;
 mod feature_degradation;
 mod geometry_report;
 mod metadata_fallback;

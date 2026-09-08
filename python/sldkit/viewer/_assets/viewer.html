@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>@@TITLE@@ · sldkit</title>
+  <style>@@STYLE@@</style>
+</head>
+<body>
+  <header class="header">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◇</span> sldkit <span class="eyebrow">VIEWER</span></div>
+    <h1 id="file-title">@@TITLE@@</h1>
+    <span class="badge" id="status">Loading</span>
+  </header>
+  <div class="workspace">
+    <aside aria-label="Model information">
+      <section class="summary">
+        <p class="eyebrow">PARSED GEOMETRY</p>
+        <div class="stats"><div><strong id="mesh-count">—</strong><span>Meshes</span></div><div><strong id="triangle-count">—</strong><span>Triangles</span></div></div>
+        <p class="muted" id="geometry-summary"></p>
+        <p class="notice" id="coverage-note">Only geometry recovered by the parser is shown. Parts of the model may be missing.</p>
+      </section>
+      <section id="mesh-section">
+        <div class="section-label"><h2>Meshes</h2><button id="show-all" class="text-button" type="button">Show all</button></div>
+        <label class="field" for="configuration">Configuration</label>
+        <select id="configuration"><option value="">All collected meshes</option></select>
+        <p class="muted small" id="ownership-note"></p>
+        <div id="mesh-list" class="mesh-list"></div>
+      </section>
+      <section id="document-section" hidden>
+        <h2>Document</h2>
+        <div id="document-info"></div>
+      </section>
+      <section>
+        <details id="diagnostics"><summary>Analysis details <span id="diagnostic-count"></span></summary><div id="diagnostic-list"></div></details>
+      </section>
+      <section class="about">
+        <details><summary>About this viewer</summary><p>Offline display of sldkit parse results. Saved previews are images embedded in the source file. Mesh wireframes show triangle edges; they are not CAD edge geometry.</p><p>Rendering: Three.js 0.180.0</p><pre>@@LICENSE@@</pre></details>
+      </section>
+    </aside>
+    <main>
+      <nav class="tabs" aria-label="Display mode">
+        <button type="button" id="tab-3d" aria-pressed="true">3D geometry</button>
+        <button type="button" id="tab-preview" aria-pressed="false">Saved previews <span id="preview-count"></span></button>
+        <span class="local-label">OFFLINE HTML</span>
+      </nav>
+      <div id="panel-3d" class="panel">
+        <div class="toolbar" id="toolbar">
+          <button type="button" id="fit" title="Fit visible meshes">Fit</button>
+          <label>View <select id="view"><option value="iso">Isometric</option><option value="front">Front (+Z)</option><option value="top">Top (+Y)</option><option value="right">Right (+X)</option></select></label>
+          <label>Display <select id="style"><option value="shaded">Shaded</option><option value="wireframe">Wireframe</option></select></label>
+          <label class="check"><input id="feature-edges" type="checkbox" checked> Feature edges</label>
+          <label class="check"><input id="axes" type="checkbox" checked> Axes</label>
+        </div>
+        <div id="viewport" aria-label="Interactive 3D geometry">
+          <div id="empty" class="empty" hidden><span class="empty-icon" aria-hidden="true">◇</span><h2 id="empty-title">No mesh available</h2><p id="empty-message">The parser did not return a displayable triangle mesh. Saved previews and analysis details may still be available.</p><button id="empty-preview" type="button">View saved previews</button></div>
+          <div class="axis-key" id="axis-key"><span class="axis-x">X</span><span class="axis-y">Y</span><span class="axis-z">Z</span><span id="unit"></span></div>
+        </div>
+        <footer class="viewport-footer"><span>Drag to orbit · Scroll to zoom · Right-drag to pan</span><span id="visible-count"></span></footer>
+      </div>
+      <div id="panel-preview" class="panel preview-panel" hidden>
+        <div class="toolbar"><label>Saved image <select id="preview-select"></select></label></div>
+        <div class="preview-stage"><img id="preview-image" alt="Saved preview from the SolidWorks file" hidden><p id="preview-empty" class="muted">No displayable saved preview was recovered.</p></div>
+        <footer class="viewport-footer">Saved in the source file. This image is independent of the parsed 3D geometry.</footer>
+      </div>
+    </main>
+  </div>
+  <noscript>This viewer requires JavaScript to display embedded meshes and saved images.</noscript>
+  <script id="sldkit-scene" type="application/json">@@DATA@@</script>
+  <script>@@SCRIPT@@</script>
+</body>
+</html>

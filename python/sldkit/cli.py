@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -43,6 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--mode", choices=("stored", "decoded"), default="decoded")
     extract.add_argument("--limits", choices=("desktop", "service"), default="desktop")
     extract.add_argument("--force", action="store_true")
+    view = subparsers.add_parser("view", help="Write an offline HTML viewer")
+    view.add_argument("path")
+    view.add_argument(
+        "--output", "-o", help="HTML path (default: input with .html suffix)"
+    )
+    view.add_argument("--limits", choices=("desktop", "service"), default="desktop")
+    view.add_argument("--force", action="store_true", help="Replace an existing HTML")
+    view.add_argument("--open", action="store_true", help="Open the generated HTML")
     scan = subparsers.add_parser("scan")
     scan.add_argument("path")
     scan.add_argument("--project-root")
@@ -63,6 +72,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "view":
+        from .viewer import view_file
+
+        try:
+            output = view_file(
+                args.path, args.output, profile=args.limits, force=args.force
+            )
+        except (OSError, ValueError) as error:
+            print(f"sldkit view: {error}", file=sys.stderr)
+            return 2
+        print(output)
+        if args.open:
+            import webbrowser
+
+            if not webbrowser.open(output.resolve().as_uri()):
+                print(
+                    "Could not open a browser; open the HTML manually.", file=sys.stderr
+                )
+        return 0
     if args.command == "probe":
         result = probe_file(args.path, profile=args.limits)
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified by sldkit; see the crate-root PATCHES.md.
 //! Material and face-color decode tests.
 #![allow(clippy::unwrap_used)]
 #![allow(unused_imports)]
@@ -127,6 +128,20 @@ fn display_fixture(
         ));
     }
     source
+}
+
+#[test]
+fn display_appearance_bindings_survive_without_a_brep_partition() {
+    let source = display_fixture([10, 20, 30], &[vec![], vec![]], &[(1, [40, 50, 60])], &[]);
+    let scan = crate::container::scan_bytes(&source);
+    let mut display_only = outer_header();
+    for section in scan
+        .sections()
+        .filter(|s| s.display_name() == "Contents/DisplayLists")
+    {
+        display_only.extend(make_block(0x41, "Contents/DisplayLists", section.payload()));
+    }
+    assert_eq!(display_colors(display_only), [[10, 20, 30], [40, 50, 60]]);
 }
 
 fn display_colors(bytes: Vec<u8>) -> Vec<[u8; 3]> {

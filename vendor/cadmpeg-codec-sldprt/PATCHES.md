@@ -12,6 +12,15 @@ contain this implementation, without a developer-local Cargo override.
 
 ## Parsing changes
 
+The unreleased display-cache update shares `decode.rs`'s DisplayLists transfer
+between B-Rep and metadata fallback paths. It preserves mesh channels, source
+records, appearance bindings, and unresolved ownership, and admits the added
+model entities against the existing cumulative resource budget. The explicit
+`container_only` path still skips meshes. `geometry_transferred` continues to
+describe B-Rep transfer; strict mode still rejects missing B-Rep. Native FIN
+failure notes now survive the metadata fallback. This does not relax FIN
+validation or change the Parasolid reader profile.
+
 `brep/native_hierarchy.rs` independently reads native BODY (12), REGION (19),
 and SHELL (13) links for **`SCH_3701229_37102_13006` only**. Both embedded BODY
 and REGION declarations must match the verified field definitions. Body kind

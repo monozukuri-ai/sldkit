@@ -123,4 +123,4 @@ level = "deny"
 priority = -100
 
 [dependencies.parasolid-core]
-version = "=0.1.0-dev6"
+version = "=0.1.0"

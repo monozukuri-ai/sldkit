@@ -170,6 +170,7 @@ pub(crate) fn decode_with_ledger(
         &mut annotations,
         &mut unknowns,
         &mut pmi_losses,
+        &[],
     );
     ctx.admit_entities(
         ir.model.entity_count() as u64,
@@ -2222,7 +2223,9 @@ fn append_display_tessellations(
     annotations: &mut Annotations,
     unknowns: &mut Vec<UnknownRecord>,
     losses: &mut Vec<cadmpeg_ir::LossNote>,
+    face_identities: &[(String, u32, u32)],
 ) {
+    let mut ownership = crate::tessellation::DisplayOwnership::default();
     let feature_appearance_sources = crate::appearance::feature_assignments(scan)
         .into_iter()
         .map(|assignment| assignment.feature_source_id)
@@ -2234,6 +2237,15 @@ fn append_display_tessellations(
         if display_faces.is_empty() {
             continue;
         }
+        let tail = display_faces
+            .iter()
+            .map(|face| face.table.end)
+            .max()
+            .unwrap_or(0);
+        ownership.configuration_names.insert(
+            display.ordinal(),
+            crate::tessellation::trailing_names(display.payload(), tail),
+        );
         for face in &display_faces {
             let candidates = face
                 .surface_references
@@ -2262,6 +2274,10 @@ fn append_display_tessellations(
                 "sldprt:displaylist:record#{}:{}",
                 display.ordinal(),
                 display_face.table_index
+            );
+            ownership.references.insert(
+                id.clone(),
+                (display.ordinal(), display_face.surface_references.clone()),
             );
             let display_stream = display.display_name();
             crate::annotations::note(
@@ -2358,7 +2374,8 @@ fn append_display_tessellations(
             reasons.join("; ")
         )));
     }
-    for id in crate::tessellation::assign_unique_analytic_owners(&mut ir.model) {
+    for id in crate::tessellation::assign_display_owners(&mut ir.model, &ownership, face_identities)
+    {
         let note = annotations.exactness.entry(id).or_default();
         note.fields.insert("body".into(), Exactness::Derived);
         note.fields.insert("faces".into(), Exactness::Derived);
@@ -2880,6 +2897,7 @@ fn build_geometry_ir(
         &mut annotations,
         &mut unknowns,
         &mut pmi_losses,
+        &face_identities,
     );
     for source_block in &scan.blocks {
         if unknowns

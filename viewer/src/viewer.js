@@ -210,6 +210,9 @@ function startRenderer() {
     }
     text('visible-count', `${visible} / ${objects.length} meshes visible`);
     if (visible) $('empty').hidden = true;
+    else if (config?.body_ids.length && !objects.some((item) => config.body_ids.includes(item.mesh.body_id))) {
+      empty('No saved mesh for this configuration', 'The parser returned bodies for this configuration, but no matching saved display mesh is available.');
+    }
     else empty('No visible meshes', 'Enable a mesh or choose a different configuration.');
     render();
   }

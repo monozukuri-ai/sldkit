@@ -461,9 +461,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "parasolid-core"
-version = "0.1.0-dev6"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a62ce9e60645f4760849d11d6f0d790d0d761083203b9b71f5d7f5c491db233e"
+checksum = "9006c709b8961c2c6fc794505bb225894e2344e8d7224b8fc2b17218439c30b3"
 
 [[package]]
 name = "pin-project-lite"

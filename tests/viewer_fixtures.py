@@ -128,6 +128,7 @@ def geometry_result(*, unresolved: bool = False) -> sldkit.GeometryResult:
                 }
             )
         )
+    bodies.append(replace(bodies[0], id="body-without-cache"))
     model = replace(
         result.geometry.model, bodies=tuple(bodies), tessellations=tuple(meshes)
     )
@@ -145,6 +146,7 @@ def geometry_result(*, unresolved: bool = False) -> sldkit.GeometryResult:
                 ("First", ["body-0"]),
                 ("Empty", []),
                 ("Unknown", None),
+                ("No cache", ["body-without-cache"]),
             ]
         )
     )

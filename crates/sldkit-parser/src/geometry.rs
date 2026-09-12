@@ -229,6 +229,29 @@ pub(crate) fn decode(
     };
     let status = geometry_status(&fidelity, &model);
     let mut diagnostics = inspection.diagnostics;
+    let derived_mesh_bindings = model
+        .tessellations
+        .iter()
+        .filter(|mesh| {
+            decoded
+                .source_fidelity()
+                .annotations
+                .exactness
+                .get(&mesh.id)
+                .is_some_and(|note| {
+                    note.fields.get("body") == Some(&Exactness::Derived)
+                        || note.fields.get("faces") == Some(&Exactness::Derived)
+                })
+        })
+        .count();
+    if derived_mesh_bindings > 0 {
+        diagnostics.push(Diagnostic::new(
+            "geometry.tessellation_ownership_derived",
+            DiagnosticSeverity::Info,
+            DiagnosticKind::Inferred,
+            format!("{derived_mesh_bindings} display mesh body/face binding(s) were derived by source-reference or geometric matching; these are not direct native owner pointers"),
+        ));
+    }
     if !fidelity.geometry_transferred {
         diagnostics.push(Diagnostic::new(
             "geometry.not_transferred",

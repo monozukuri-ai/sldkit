@@ -326,3 +326,20 @@ Unresolved native FIN diagnostics are retained even when no B-Rep survives.
 Mesh vertices, triangles, normals, native channels, appearance bindings, and
 source provenance use the same reader as the B-Rep success path. Body/face
 references and configuration ownership remain unresolved when B-Rep is absent.
+
+Display-face persistent references can constrain the join to emitted Parasolid
+`ATOM_ID_2001` face identities. A display stream is scoped to a configuration
+only when all its tables have consistent references, complete body memberships
+select exactly one configuration, and its name is independently present in the
+stream tail. A saved active flag or name alone never selects ownership.
+Analytic carrier/trim checks disambiguate remaining candidates; a unique source
+reference can also identify a NURBS face. Conflicts and non-unique joins remain
+unresolved. These body/face bindings are marked `Derived` in the decoder's field
+annotations and reported by `geometry.tessellation_ownership_derived`; they do
+not certify direct native owner pointers or overall model completeness.
+
+The bounded DisplayLists reader also accepts reused MFC face-class tags learned
+from validated instances inside the first declared face interval. Each added
+table must satisfy the same header/channel checks, and already read tables are
+not duplicated. This covers continuation after body-property records without
+claiming a general MFC archive reader.

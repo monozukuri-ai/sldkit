@@ -44,6 +44,11 @@ The result stays `partial`; Analysis details distinguish the B-Rep failure from
 successful display-cache transfer. Body, face, and configuration relationships
 remain unresolved where the parser cannot establish them.
 
+The parser can derive mesh ownership from consistent persistent references and
+configuration membership; these matches are explained in Analysis details.
+A configuration with parsed bodies but no matching saved mesh displays
+"No saved mesh for this configuration". Its geometry is not inferred to be empty.
+
 - Orbit by dragging, zoom by scrolling, and pan with the right mouse button.
 - Fit frames visible meshes. Front (+Z), top (+Y), right (+X), and isometric
   views retain source axis directions. Units come from `GeometryDocument`.

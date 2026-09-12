@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified by sldkit; see the crate-root PATCHES.md.
 //! `DisplayLists` descriptor tables.
 
 use crate::container::{ContainerScan, Section};
@@ -7,7 +8,10 @@ use cadmpeg_ir::geometry::{CurveGeometry, SurfaceGeometry};
 use cadmpeg_ir::math::{Point2, Point3, Vector3};
 use cadmpeg_ir::tessellation::TessellationChannel;
 use cadmpeg_ir::topology::Sense;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+mod ownership;
+pub(crate) use ownership::{trailing_names, DisplayOwnership};
 
 use crate::layout::display_lists_compact_face_header as compact_face;
 use crate::layout::display_lists_extended_face_header as extended_face;
@@ -51,6 +55,9 @@ pub(crate) struct DisplayFace {
 /// One framed persistent-surface reference in a display-face metadata slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PersistentSurfaceReference {
+    // Preserve the complete identity for duplicate/conflict checks. The first
+    // two integers alone do not distinguish an end face from a sketch side.
+    pub(crate) identity: String,
     pub(crate) feature_source_id: u32,
     pub(crate) local_surface_id: u32,
 }
@@ -375,6 +382,7 @@ pub(crate) fn section_display_faces(section: Section<'_>) -> Vec<DisplayFace> {
             });
         }
     }
+    append_referenced_faces(payload, &classes, &mut faces);
     faces.sort_by_key(|face| face.table.start);
     for index in 0..faces.len() {
         let metadata_end = faces
@@ -387,6 +395,106 @@ pub(crate) fn section_display_faces(section: Section<'_>) -> Vec<DisplayFace> {
             persistent_surface_references(payload, faces[index].metadata);
     }
     faces
+}
+
+/// Recognize reused face classes from validated instances in the declared
+/// face interval. MFC old-class tags reuse a class without repeating its name.
+/// Unknown tags and bare descriptor arrays are not admitted by this path.
+fn append_referenced_faces(
+    payload: &[u8],
+    classes: &[ClassInterval],
+    faces: &mut Vec<DisplayFace>,
+) {
+    let mut tags = HashSet::new();
+    for face in faces.iter() {
+        for width in [compact_face::LEN, extended_face::LEN] {
+            let Some(at) = face.table.start.checked_sub(width + 2) else {
+                continue;
+            };
+            let Some(tag) = View::u16_le_at(payload, at) else {
+                continue;
+            };
+            if tag & 0x8000 == 0 || tag == 0xffff || tag == 0x8000 {
+                continue;
+            }
+            if classes.iter().any(|class| {
+                class.name == "uoTempFaceTessData_c"
+                    && class.content.start <= at
+                    && face.table.end <= class.content.end
+            }) && descriptor_table_offset(payload, at + 2) == width
+                && face_header_agrees(payload, at + 2, &face.mesh)
+            {
+                tags.insert(tag);
+            }
+        }
+    }
+    if tags.len() != 1 {
+        return;
+    }
+    let Some(tag) = tags.iter().next().copied() else {
+        return;
+    };
+    let Some(first) = faces.iter().map(|face| face.table.start).min() else {
+        return;
+    };
+    let mut ranges = faces
+        .iter()
+        .map(|f| (f.table.start, f.table.end))
+        .collect::<Vec<_>>();
+    let known = ranges.iter().copied().collect::<HashMap<_, _>>();
+    ranges.sort_unstable();
+    let mut ranges = ranges.into_iter().peekable();
+    let mut at = first;
+    while at + 2 < payload.len() {
+        if let Some(&(start, end)) = ranges.peek() {
+            if start <= at {
+                ranges.next();
+                at = at.max(end);
+                continue;
+            }
+        }
+        if View::u16_le_at(payload, at) != Some(tag) {
+            at += 1;
+            continue;
+        }
+        let header = at + 2;
+        let start = header + descriptor_table_offset(payload, header);
+        if let Some(end) = known.get(&start) {
+            at = *end;
+            continue;
+        }
+        let limit = classes
+            .iter()
+            .find(|class| class.class_offset > at)
+            .map_or(payload.len(), |class| class.class_offset);
+        if let Some((mesh, end)) = parse_table(payload, start) {
+            if end <= limit
+                && !mesh.vertices.is_empty()
+                && face_header_agrees(payload, header, &mesh)
+            {
+                faces.push(DisplayFace {
+                    mesh,
+                    table_index: 0,
+                    table: ByteRange { start, end },
+                    metadata: ByteRange {
+                        start: end,
+                        end: limit,
+                    },
+                    surface_references: Vec::new(),
+                });
+                at = end;
+                continue;
+            }
+        }
+        at += 2;
+    }
+}
+
+fn face_header_agrees(payload: &[u8], at: usize, mesh: &Mesh) -> bool {
+    View::u32_le_at(payload, at + compact_face::TRIANGLE_COUNT)
+        .is_some_and(|count| count as usize == mesh.triangles.len())
+        && View::u32_le_at(payload, at + compact_face::STRIP_COUNT)
+            .is_some_and(|count| count as usize == mesh.strip_lengths.len())
 }
 
 pub fn section_meshes(section: Section<'_>) -> Vec<Mesh> {
@@ -509,6 +617,7 @@ fn persistent_surface_references(
             continue;
         };
         references.push(PersistentSurfaceReference {
+            identity: text.trim().to_string(),
             feature_source_id,
             local_surface_id,
         });
@@ -540,9 +649,19 @@ pub fn summary(scan: &ContainerScan) -> Summary {
 /// Display coordinates are stored as f32, while the B-rep carriers are f64.
 /// The relative tolerance below covers that quantization. Complete planar
 /// trims can distinguish faces on a shared analytic carrier.
+#[cfg(test)]
 pub(crate) fn assign_unique_analytic_owners(
     model: &mut cadmpeg_ir::document::Model,
 ) -> Vec<String> {
+    assign_display_owners(model, &DisplayOwnership::default(), &[])
+}
+
+pub(crate) fn assign_display_owners(
+    model: &mut cadmpeg_ir::document::Model,
+    source: &DisplayOwnership,
+    identities: &[(String, u32, u32)],
+) -> Vec<String> {
+    let constraints = ownership::face_constraints(model, source, identities);
     let surfaces = model
         .surfaces
         .iter()
@@ -636,11 +755,18 @@ pub(crate) fn assign_unique_analytic_owners(
         let quantization_tolerance = coordinate_scale * f64::from(f32::EPSILON) * 8.0 + 1.0e-9;
         let mut owners = candidates
             .iter()
-            .filter(|(_, _, surface, tolerance, inverse, _)| {
+            .filter(|(face, _, surface, tolerance, inverse, _)| {
+                let allowed = constraints.get(&mesh.id);
+                if allowed.is_some_and(|allowed| !allowed.contains(&face.0)) {
+                    return false;
+                }
                 let tolerance = tolerance.max(quantization_tolerance);
                 mesh.vertices.iter().all(|point| {
-                    analytic_surface_residual(surface, inverse.apply_point(*point))
-                        .is_some_and(|residual| residual <= tolerance)
+                    match analytic_surface_residual(surface, inverse.apply_point(*point)) {
+                        Some(residual) => residual <= tolerance,
+                        // A unique persistent reference can bind a non-analytic face.
+                        None => allowed.is_some(),
+                    }
                 })
             })
             .collect::<Vec<_>>();

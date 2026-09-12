@@ -12,6 +12,21 @@ contain this implementation, without a developer-local Cargo override.
 
 ## Parsing changes
 
+The unreleased ownership update extends the bounded DisplayLists reader to
+reused MFC face-class tags established inside a validated declared face interval.
+New tables retain header/channel validation and cannot duplicate existing ones.
+Full persistent-reference strings are retained for conflict detection, then
+joined to emitted `ATOM_ID_2001` identities. Configuration scope requires a
+unique match across the stream's complete set of decoded mesh references and
+a corroborating name in its trailing data. Geometric carrier/trim checks retain
+the prior disambiguation rules. Derived bindings never replace native body
+hierarchy, and unmatched/conflicting supplied references do not fall back to geometry.
+
+MFC class reuse follows the framing described in Microsoft's
+[TN002](https://learn.microsoft.com/en-us/cpp/mfc/tn002-persistent-object-data-format?view=msvc-170).
+The supported SolidWorks table layout and joins are separately tested against
+synthetic fixtures and the controlled local Part; this is not general MFC support.
+
 The unreleased display-cache update shares `decode.rs`'s DisplayLists transfer
 between B-Rep and metadata fallback paths. It preserves mesh channels, source
 records, appearance bindings, and unresolved ownership, and admits the added

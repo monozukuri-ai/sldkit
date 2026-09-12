@@ -81,6 +81,17 @@ test('unresolved ownership disables configuration filtering', async () => {
   await page.close();
 });
 
+test('a configuration with bodies but no cached mesh reports the missing cache', async () => {
+  const { page, errors } = await open('meshes');
+  await page.selectOption('#configuration', 'No cache');
+  assert.equal(await page.locator('#visible-count').textContent(), '0 / 2 meshes visible');
+  assert.equal(await page.locator('#empty-title').textContent(), 'No saved mesh for this configuration');
+  await page.selectOption('#configuration', 'First');
+  assert.equal(await page.locator('#visible-count').textContent(), '1 / 2 meshes visible');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test('saved PNG is displayed offline when geometry is empty', async () => {
   const { page, errors, remote } = await open('preview');
   assert.equal(await page.locator('#panel-preview').isVisible(), true);

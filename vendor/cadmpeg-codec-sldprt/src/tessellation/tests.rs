@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modified by sldkit; see the crate-root PATCHES.md.
 #![allow(clippy::unwrap_used)]
 #![allow(unused_imports)]
 
@@ -43,6 +44,97 @@ fn table() -> Vec<u8> {
     out.extend(descriptor(4, 8, 1, &4_u32.to_le_bytes()));
     out.extend(descriptor(1, 8, 4, &[0; 4]));
     out
+}
+
+fn referenced_cache(tag: u16, triangle_count: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    class(&mut payload, "uoTempFaceTessData_c", &[]);
+    payload.extend(1_u32.to_le_bytes());
+    payload.extend(1_u32.to_le_bytes());
+    payload.extend(table());
+    // Establish a reused class in the already recognized face interval.
+    payload.extend(0x8036_u16.to_le_bytes());
+    payload.extend(1_u32.to_le_bytes());
+    payload.extend(1_u32.to_le_bytes());
+    payload.extend(table());
+    class(&mut payload, "uoBodyPropInfo_c", &[]);
+    payload.extend([0; 24]);
+    payload.extend(tag.to_le_bytes());
+    payload.extend(triangle_count.to_le_bytes());
+    payload.extend(1_u32.to_le_bytes());
+    payload.extend(table());
+    payload
+}
+
+#[test]
+fn reused_face_class_continues_after_body_properties() {
+    for (tag, count, expected) in [(0x8036, 1, 3), (0x8037, 1, 2), (0x8036, 7, 2)] {
+        let mut source = outer_header();
+        source.extend(make_block(
+            0x41,
+            "Contents/DisplayLists",
+            &referenced_cache(tag, count),
+        ));
+        let result = SldprtCodec
+            .decode(&mut Cursor::new(source), &DecodeOptions::default())
+            .unwrap();
+        assert_eq!(result.ir().model.tessellations.len(), expected);
+        assert_eq!(
+            result
+                .ir()
+                .model
+                .tessellations
+                .iter()
+                .map(|m| m.triangles.len())
+                .sum::<usize>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn referenced_cache_requires_an_anchor_and_complete_payload() {
+    let payload = referenced_cache(0x8036, 1);
+    let prop = class_intervals(&payload)
+        .into_iter()
+        .find(|c| c.name == "uoBodyPropInfo_c")
+        .unwrap();
+    for data in [
+        payload[..payload.len() - 12].to_vec(),
+        payload[prop.class_offset..].to_vec(),
+    ] {
+        let mut source = outer_header();
+        source.extend(make_block(0x41, "Contents/DisplayLists", &data));
+        let result = SldprtCodec
+            .decode(&mut Cursor::new(source), &DecodeOptions::default())
+            .unwrap();
+        assert!(result.ir().model.tessellations.len() < 3);
+    }
+}
+
+#[test]
+fn persistent_surface_identity_preserves_class_and_extra_components() {
+    let mut payload = Vec::new();
+    for text in [
+        "moFromSktEntSurfIdRep_c,30,1,",
+        "moEndFaceSurfIdRep_c,30,1,0,",
+    ] {
+        payload.extend([0xff, 0xfe, 0xff, text.len() as u8]);
+        for unit in text.encode_utf16() {
+            payload.extend(unit.to_le_bytes());
+        }
+    }
+    let refs = persistent_surface_references(
+        &payload,
+        ByteRange {
+            start: 0,
+            end: payload.len(),
+        },
+    );
+    assert_eq!(refs.len(), 2);
+    assert_eq!(refs[0].feature_source_id, refs[1].feature_source_id);
+    assert_eq!(refs[0].local_surface_id, refs[1].local_surface_id);
+    assert_ne!(refs[0], refs[1]);
 }
 
 fn class(payload: &mut Vec<u8>, name: &str, sources: &[u32]) {

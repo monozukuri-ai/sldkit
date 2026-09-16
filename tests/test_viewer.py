@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import re
 import struct
 from dataclasses import replace
+from importlib import resources
 
 import pytest
 import sldkit
@@ -44,6 +46,21 @@ def test_html_retains_mesh_coordinates_indices_units_and_partial_status(tmp_path
     assert data["configurations"][2]["body_ids"] is None
     assert "Three.js 0.180.0" in output.read_text()
     assert not re.search(r"<script[^>]+src=", output.read_text())
+
+
+def test_standalone_html_carries_complete_software_notices(tmp_path):
+    output = write_html(geometry_result(), tmp_path / "licenses.html")
+    text = output.read_text(encoding="utf-8")
+    notice = (
+        resources.files("sldkit.viewer")
+        .joinpath("_assets/LICENSE.txt")
+        .read_text("utf-8")
+    )
+    assert html.escape(notice) in text
+    assert "Required Notice: sldkit is licensed by UnRobotics Inc." in text
+    assert "PolyForm Noncommercial License 1.0.0" in text
+    assert "sldkit-legacy-MIT.txt" in text
+    assert "three.js authors" in text
 
 
 def test_source_strings_cannot_terminate_embedded_json_or_replace_template(tmp_path):

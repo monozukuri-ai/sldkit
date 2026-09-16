@@ -3,6 +3,8 @@
 These documents describe the public behavior and stable architectural
 boundaries of `sldkit`.
 
+- [Licensing](license.md) ([日本語](license.ja.md)): public permissions and commercial arrangements
+- [Releasing](releasing.md): license, dependency and distribution gates
 - [Architecture](architecture.md): package responsibilities and data flow
 - [Compatibility](compatibility.md): supported and unsupported capabilities
 - [Modern Part geometry](geometry.md): topology, carriers, tessellation, and fidelity

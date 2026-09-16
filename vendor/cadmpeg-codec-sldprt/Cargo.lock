@@ -264,9 +264,9 @@ dependencies = [
 
 [[package]]
 name = "parasolid-core"
-version = "0.1.0-dev6"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a62ce9e60645f4760849d11d6f0d790d0d761083203b9b71f5d7f5c491db233e"
+checksum = "24abe504c1f489a216355c371a3e51d6aa62fbb4f55fa797ceddfe89b8debfb8"
 
 [[package]]
 name = "pkg-config"

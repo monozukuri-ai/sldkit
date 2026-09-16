@@ -8,7 +8,7 @@ dependency in their data flow.
 ## Parasolid dependency
 
 `sldkit-parser` and its SolidWorks adapter use the published
-`parasolid-core = "=0.1.0-dev6"` Rust crate. No Python `parasolid-kit` package or
+`parasolid-core = "=0.2.0"` Rust crate. No Python `parasolid-kit` package or
 adjacent checkout is required. Standard embedded `X_B` headers are validated
 under the caller's size/string limits. The public `parasolid_body` origin remains
 immediately after the schema string; offsets and hashes retain their meaning.
@@ -35,7 +35,7 @@ reconstruction. The strict core `parse_xb`/B-Rep path still accepts the exact
 3/4. Partial record recognition does not upgrade that strict status, geometry
 exactness, source trim evidence, or byte coverage. Derived intersection caches
 and pcurves retain their existing classification. See the core's
-[partial-reader contract and provenance](https://docs.rs/crate/parasolid-core/0.1.0-dev6/source/PARTIAL_READERS.md).
+[partial-reader contract and provenance](https://docs.rs/crate/parasolid-core/0.2.0/source/PARTIAL_READERS.md).
 
 ## Entry points
 

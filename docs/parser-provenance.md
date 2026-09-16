@@ -62,7 +62,7 @@ The dependency version and source are reviewable in `Cargo.lock` and the
 [upstream legal policy](https://github.com/cadmpeg/cadmpeg/blob/v0.5.3/LEGAL.md).
 
 Standard embedded Parasolid headers and the shared partial geometry readers now
-come from `parasolid-core 0.1.0-dev6`, with the registry checksum in `Cargo.lock`.
+come from `parasolid-core 0.2.0`, with the registry checksum in `Cargo.lock`.
 The original core is MIT licensed; adopted cadmpeg/sldkit readers are Apache-2.0
 licensed, and the core declares `MIT AND Apache-2.0`. Both license texts remain
 in the distribution. Patch 4 removes the adapter's duplicate readers while

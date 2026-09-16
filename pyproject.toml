@@ -4,20 +4,20 @@ build-backend = "maturin"
 
 [project]
 name = "sldkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Source-faithful parsing foundations for SolidWorks files"
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE", "LICENSES/*"]
+license = "PolyForm-Noncommercial-1.0.0 AND MIT AND Apache-2.0 AND BSD-3-Clause"
+license-files = ["LICENSE", "COMMERCIAL-LICENSE.md", "THIRD_PARTY_NOTICES.md", "LICENSES/*"]
 requires-python = ">=3.10"
 authors = [
     { name = "neka-nat", email = "nekanat.stock@gmail.com" },
 ]
+maintainers = [{ name = "UnRobotics Inc." }]
 keywords = ["cad", "parser", "solidworks", "sldprt", "sldasm", "slddrw"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -30,6 +30,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
+Licensing = "https://github.com/monozukuri-ai/sldkit/blob/main/docs/license.md"
+Commercial = "https://www.un-robotics.com/#contact"
 Homepage = "https://github.com/monozukuri-ai/sldkit"
 Repository = "https://github.com/monozukuri-ai/sldkit"
 Issues = "https://github.com/monozukuri-ai/sldkit/issues"
@@ -52,6 +54,13 @@ python-source = "python"
 module-name = "sldkit._core"
 bindings = "pyo3"
 include = [
+    { path = "CONTRIBUTING.md", format = "sdist" },
+    { path = "CLA.md", format = "sdist" },
+    { path = "viewer/LICENSE.txt", format = "sdist" },
+    { path = "scripts/check_license.py", format = "sdist" },
+    { path = "scripts/sync_license_notices.py", format = "sdist" },
+    { path = "scripts/verify_release_artifacts.py", format = "sdist" },
+    { path = "scripts/verify_release_version.py", format = "sdist" },
     { path = "docs/**/*", format = "sdist" },
     { path = "viewer/package.json", format = "sdist" },
     { path = "viewer/package-lock.json", format = "sdist" },
@@ -66,6 +75,9 @@ include = [
     { path = "scripts/validate_nurbs_trim.py", format = "sdist" },
 ]
 exclude = [
+    ".internal/**",
+    "preview.html",
+    "fuzz/**",
     "reference/**",
     "corpus/**",
     "designs/**",

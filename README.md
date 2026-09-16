@@ -177,5 +177,12 @@ uv run --frozen python scripts/smoke_wheel_artifact.py dist
 
 ## License
 
-MIT. External validation inputs are not part of the installed package or source
-distribution.
+Starting with 0.2.0, new material is source-available under PolyForm Noncommercial
+1.0.0, with separate commercial licenses from **UnRobotics Inc.** Previously
+published MIT material and third-party components retain their original rights.
+See [licensing](docs/license.md) ([日本語](docs/license.ja.md)),
+[commercial licensing](COMMERCIAL-LICENSE.md), and [third-party notices](THIRD_PARTY_NOTICES.md).
+External validation inputs are excluded from distributions.
+
+Required Notice: sldkit is licensed by UnRobotics Inc. (https://www.un-robotics.com/).
+Required Notice: sldkit 0.2.0 and later offer new material under PolyForm Noncommercial 1.0.0; separate commercial licenses are available.

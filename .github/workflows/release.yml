@@ -29,6 +29,12 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: python scripts/verify_release_version.py --tag "$RELEASE_TAG"
+      - name: Verify license texts, dependency inventory and generated notices
+        run: python scripts/check_license.py
+      - name: Test release and license rejection cases
+        run: |
+          python -m pip install pytest
+          python -m pytest tests/test_license.py tests/test_release_helpers.py -q
 
   wheels:
     name: ${{ matrix.name }} / ABI3 Python 3.10+

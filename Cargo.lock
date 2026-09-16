@@ -461,9 +461,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "parasolid-core"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9006c709b8961c2c6fc794505bb225894e2344e8d7224b8fc2b17218439c30b3"
+checksum = "24abe504c1f489a216355c371a3e51d6aa62fbb4f55fa797ceddfe89b8debfb8"
 
 [[package]]
 name = "pin-project-lite"
@@ -675,7 +675,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "sldkit-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "serde",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-container"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cfb",
  "crc32fast",
@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadmpeg-codec-sldprt",
  "cadmpeg-core",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-python"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "pyo3",
  "serde",

@@ -10,6 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  licensing:
+    name: Licensing and release gates
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Verify source versions and license notices
+        run: |
+          python scripts/verify_release_version.py
+          python scripts/check_license.py
+      - name: Test release and license rejection cases
+        run: |
+          python -m pip install pytest
+          python -m pytest tests/test_license.py tests/test_release_helpers.py -q
+
   backend-tests:
     name: Native body and configuration backend
     runs-on: ubuntu-22.04
@@ -22,6 +39,7 @@ jobs:
 
   wheel-smoke:
     name: ${{ matrix.name }} / ABI3 Python 3.10+
+    needs: licensing
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -84,6 +102,7 @@ jobs:
 
   sdist-roundtrip:
     name: sdist round-trip / CPython 3.13
+    needs: licensing
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6

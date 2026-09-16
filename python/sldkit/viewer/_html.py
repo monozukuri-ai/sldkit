@@ -238,7 +238,7 @@ def _write(scene: dict[str, Any], output: Path, force: bool) -> Path:
         "STYLE": assets.joinpath("viewer.css").read_text(encoding="utf-8"),
         "DATA": payload,
         "SCRIPT": assets.joinpath("viewer.js").read_text(encoding="utf-8"),
-        "LICENSE": html.escape(assets.joinpath("three-LICENSE.txt").read_text("utf-8")),
+        "LICENSE": html.escape(assets.joinpath("LICENSE.txt").read_text("utf-8")),
     }
     template = assets.joinpath("viewer.html").read_text(encoding="utf-8")
     # Replace only template tokens, never tokens inside untrusted source strings.

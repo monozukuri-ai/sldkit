@@ -37,7 +37,13 @@ def test_python_extension_uses_python_310_abi3():
 def test_private_development_inputs_are_explicitly_excluded_from_artifacts():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     excluded = set(project["tool"]["maturin"]["exclude"])
-    assert {"reference/**", "corpus/**", "designs/**"} <= excluded
+    assert {
+        "reference/**",
+        "corpus/**",
+        "designs/**",
+        ".internal/**",
+        "preview.html",
+    } <= excluded
 
 
 def test_public_documentation_is_included_only_in_the_source_distribution():
@@ -48,4 +54,20 @@ def test_public_documentation_is_included_only_in_the_source_distribution():
 
 def test_license_files_include_project_and_compiled_dependency_licenses():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["license-files"] == ["LICENSE", "LICENSES/*"]
+    included = {
+        path.relative_to(ROOT).as_posix()
+        for pattern in project["project"]["license-files"]
+        for path in ROOT.glob(pattern)
+        if path.is_file()
+    }
+    assert {
+        "LICENSE",
+        "COMMERCIAL-LICENSE.md",
+        "THIRD_PARTY_NOTICES.md",
+        "LICENSES/PolyForm-Noncommercial-1.0.0.md",
+        "LICENSES/sldkit-legacy-MIT.txt",
+        "LICENSES/Apache-2.0.txt",
+        "LICENSES/parasolid-core-MIT.txt",
+        "LICENSES/three-MIT.txt",
+        "LICENSES/rust-dependencies.txt",
+    } <= included

@@ -2,6 +2,7 @@
 name = "sldkit-fuzz"
 version = "0.0.0"
 publish = false
+license = "PolyForm-Noncommercial-1.0.0 AND MIT"
 edition = "2024"
 
 [package.metadata]

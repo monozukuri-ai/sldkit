@@ -169,3 +169,10 @@ Run the available upstream and patch unit tests from the repository root:
 CARGO_TARGET_DIR=target cargo test --locked --manifest-path vendor/cadmpeg-codec-sldprt/Cargo.toml --lib
 cargo fmt --manifest-path vendor/cadmpeg-codec-sldprt/Cargo.toml -- --check
 ```
+
+## Dependency update for sldkit 0.2.0
+
+The adapter now pins the registry `parasolid-core =0.2.0`. Its standalone
+lockfile and the parent/fuzz workspaces use the same version. This dependency
+update does not change the Apache-2.0 licensing of this vendor subtree or
+relicense the shared readers.

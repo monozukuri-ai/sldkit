@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import html
 import io
 import struct
 import tempfile
 import zipfile
 import zlib
-from importlib import metadata
+from importlib import metadata, resources
 from pathlib import Path
 
 import sldkit
@@ -172,6 +173,15 @@ with tempfile.TemporaryDirectory() as directory:
     assert "data:image/png;base64," in viewer_html
     assert "Three.js 0.180.0" in viewer_html
     assert "Permission is hereby granted" in viewer_html
+    notice = (
+        resources.files("sldkit.viewer")
+        .joinpath("_assets/LICENSE.txt")
+        .read_text("utf-8")
+    )
+    assert html.escape(notice) in viewer_html
+    assert "Required Notice: sldkit is licensed by UnRobotics Inc." in viewer_html
+    assert "PolyForm Noncommercial License 1.0.0" in viewer_html
+    assert "sldkit-legacy-MIT.txt" in viewer_html
     write_html(geometry, project_root / "geometry.html")
     assembly_path = project_root / "root.SLDASM"
     part_path = project_root / "child.SLDPRT"

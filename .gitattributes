@@ -1,0 +1,10 @@
+# Canonical third-party bytes and hashes must survive Windows checkouts.
+LICENSES/** -text
+LICENSE text eol=lf
+README.md text eol=lf
+COMMERCIAL-LICENSE.md text eol=lf
+THIRD_PARTY_NOTICES.md text eol=lf
+crates/**/LICENSE text eol=lf
+fuzz/LICENSE text eol=lf
+viewer/LICENSE.txt text eol=lf
+python/sldkit/viewer/_assets/** text eol=lf

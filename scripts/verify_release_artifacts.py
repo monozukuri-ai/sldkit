@@ -3,12 +3,25 @@ from __future__ import annotations
 
 import argparse
 import email.parser
+import sys
 import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+import tomllib
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_license import (  # noqa: E402
+    PARASOLID_VERSION,
+    ROOT,
+    check_archive_licenses,
+    check_viewer_assets,
+    notice_bundle,
+    read_toml,
+)
+
 CAD_SUFFIXES = {".sldprt", ".sldasm", ".slddrw"}
-FORBIDDEN_ROOTS = {"reference", "corpus", "designs", ".cargo"}
+FORBIDDEN_ROOTS = {"reference", "corpus", "designs", ".cargo", ".internal", "fuzz"}
 FORBIDDEN_REQUIREMENTS = {
     "cad3d-ir",
     "cadquery",
@@ -48,6 +61,8 @@ def _check_names(path: Path, names: list[str]) -> None:
         parts = _normalized_parts(name)
         if parts and parts[0].lower() in FORBIDDEN_ROOTS:
             failures.append(f"forbidden directory: {name}")
+        if parts == ("preview.html",):
+            failures.append(f"local viewer output: {name}")
         if PurePosixPath(name).suffix.lower() in CAD_SUFFIXES:
             failures.append(f"CAD binary: {name}")
     if failures:
@@ -58,6 +73,7 @@ def _check_wheel(path: Path) -> None:
     assert "-cp310-abi3-" in path.name, f"wheel is not Python 3.10+ ABI3: {path}"
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
+        assert len(names) == len(set(names)), "duplicate archive paths"
         _check_names(path, names)
         assert any(name.endswith("/METADATA") for name in names), path
         assert any(name.endswith("/WHEEL") for name in names), path
@@ -86,6 +102,10 @@ def _check_wheel(path: Path) -> None:
         ), path
         metadata_name = next(name for name in names if name.endswith("/METADATA"))
         metadata = email.parser.BytesParser().parsebytes(archive.read(metadata_name))
+        assert sum(name.endswith("/METADATA") for name in names) == 1, path
+        info = metadata_name.removesuffix("METADATA")
+        check_archive_licenses(archive.read, metadata, info + "licenses/")
+        check_viewer_assets(lambda name: archive.read("sldkit/viewer/_assets/" + name))
         wheel_name = next(name for name in names if name.endswith("/WHEEL"))
         wheel_metadata = email.parser.BytesParser().parsebytes(archive.read(wheel_name))
 
@@ -103,6 +123,7 @@ def _check_wheel(path: Path) -> None:
 def _check_sdist(path: Path) -> None:
     with tarfile.open(path, "r:gz") as archive:
         names = archive.getnames()
+        assert len(names) == len(set(names)), "duplicate archive paths"
 
         def source(relative: str) -> str:
             name = next(
@@ -112,18 +133,28 @@ def _check_sdist(path: Path) -> None:
             assert member is not None, (path, relative)
             return member.read().decode("utf-8")
 
-        lock = source("Cargo.lock")
-        core_block = next(
-            block
-            for block in lock.split("[[package]]")
-            if '\nname = "parasolid-core"\n' in block
+        def read(name: str) -> bytes:
+            member = archive.extractfile(name)
+            assert member is not None, name
+            return member.read()
+
+        pkg_info = next(
+            name for name in names if _normalized_parts(name) == ("PKG-INFO",)
         )
-        assert 'version = "0.1.0-dev6"' in core_block, (path, core_block)
-        assert (
-            'source = "registry+https://github.com/rust-lang/crates.io-index"'
-            in core_block
+        metadata = email.parser.BytesParser().parsebytes(read(pkg_info))
+        check_archive_licenses(read, metadata, pkg_info.removesuffix("PKG-INFO"))
+        check_viewer_assets(
+            lambda name: source("python/sldkit/viewer/_assets/" + name).encode()
         )
-        assert 'checksum = "' in core_block, (path, core_block)
+        assert source("viewer/LICENSE.txt").encode() == notice_bundle(viewer=True)
+        workspace = tomllib.loads(source("Cargo.toml"))["workspace"]
+        for member in workspace["members"]:
+            assert source(f"{member}/LICENSE").encode() == notice_bundle(), member
+        _check_parasolid_dependency(
+            source("Cargo.toml"),
+            source("vendor/cadmpeg-codec-sldprt/Cargo.toml"),
+            source("Cargo.lock"),
+        )
         for name in (
             "topology",
             "native_fin",
@@ -141,6 +172,18 @@ def _check_sdist(path: Path) -> None:
     normalized = {"/".join(_normalized_parts(name)) for name in names}
     assert "Cargo.toml" in normalized, path
     assert "pyproject.toml" in normalized, path
+    for required in (
+        "CLA.md",
+        "CONTRIBUTING.md",
+        "docs/license.md",
+        "docs/license.ja.md",
+        "docs/releasing.md",
+        "scripts/check_license.py",
+        "scripts/sync_license_notices.py",
+        "scripts/verify_release_artifacts.py",
+        "scripts/verify_release_version.py",
+    ):
+        assert required in normalized, (path, required)
     assert "python/sldkit/__init__.py" in normalized, path
     assert "docs/README.md" in normalized, path
     assert "docs/architecture.md" in normalized, path
@@ -179,6 +222,31 @@ def _check_sdist(path: Path) -> None:
         "src/byte_ledger.rs",
     ):
         assert f"vendor/cadmpeg-codec-sldprt/{required}" in normalized, path
+
+
+def _check_parasolid_dependency(
+    workspace_source: str, vendor_source: str, lock_source: str
+) -> None:
+    workspace = tomllib.loads(workspace_source)["workspace"]
+    vendor = tomllib.loads(vendor_source)
+    assert workspace["dependencies"]["parasolid-core"] == "=" + PARASOLID_VERSION
+    assert (
+        vendor["dependencies"]["parasolid-core"]["version"] == "=" + PARASOLID_VERSION
+    )
+    assert vendor["package"]["license"] == "Apache-2.0"
+    actual = [
+        p
+        for p in tomllib.loads(lock_source)["package"]
+        if p["name"] == "parasolid-core"
+    ]
+    expected = [
+        p
+        for p in read_toml(ROOT / "Cargo.lock")["package"]
+        if p["name"] == "parasolid-core"
+    ]
+    assert len(actual) == len(expected) == 1
+    for field in ("version", "source", "checksum"):
+        assert actual[0][field] == expected[0][field], (field, actual[0])
 
 
 def main() -> None:

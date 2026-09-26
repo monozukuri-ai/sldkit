@@ -36,6 +36,7 @@ use sldkit_core::{
 };
 
 mod byte_partition;
+mod intervals;
 mod parasolid;
 
 const DECODER_NAME: &str = "cadmpeg-codec-sldprt";
@@ -550,6 +551,7 @@ fn map_model(
             provenance: provenance(&coedge.id.0, annotations),
         })
         .collect();
+    let interval_sources = intervals::Sources::new(ir);
     let edges = ir
         .model
         .edges
@@ -562,6 +564,7 @@ fn map_model(
             parameter_range: edge.param_range,
             tolerance: edge.tolerance,
             provenance: provenance(&edge.id.0, annotations),
+            derived_parameter_interval: intervals::derive_for_edge(edge, &interval_sources),
         })
         .collect();
     let vertices = ir
@@ -1420,7 +1423,20 @@ fn topology_metrics(ir: &CadIr) -> Vec<GeometryTopologyMetrics> {
                     }
                 }
             }
-            let euler_characteristic = matches!(body.kind, BodyKind::Solid | BodyKind::Sheet)
+            // V-E+F treats every face as a disk. Multiple boundary loops (for
+            // example a planar face with holes) do not satisfy that contract.
+            // Preserve the census but withhold an inapplicable Euler value.
+            let disk_faces = !face_ids.is_empty()
+                && face_ids.iter().all(|id| {
+                    faces.get(id).is_some_and(|face| {
+                        face.loops.len() == 1
+                            && loops.get(face.loops[0].as_str()).is_some_and(|item| {
+                                !item.coedges.is_empty() && item.vertex_uses.is_empty()
+                            })
+                    })
+                });
+            let euler_characteristic = (matches!(body.kind, BodyKind::Solid | BodyKind::Sheet)
+                && disk_faces)
                 .then(|| euler(vertex_ids.len(), edge_ids.len(), face_ids.len()))
                 .flatten();
             GeometryTopologyMetrics {
@@ -1985,6 +2001,23 @@ mod tests {
                 .any(|s| s.tag == "nurbs.control")
         );
         Ok(())
+    }
+
+    #[test]
+    fn topology_census_withholds_disk_euler_for_multiple_boundary_loops() {
+        let mut ir = cadmpeg_ir::examples::unit_cube();
+        assert_eq!(
+            super::topology_metrics(&ir)[0].euler_characteristic,
+            Some(2)
+        );
+        // A second boundary invalidates the disk-face V-E+F assumption.
+        let mut inner = ir.model.loops[0].clone();
+        inner.id = LoopId("inner-loop".into());
+        ir.model.faces[0].loops.push(inner.id.clone());
+        ir.model.loops.push(inner);
+        let metrics = super::topology_metrics(&ir);
+        assert_eq!(metrics[0].faces, 6);
+        assert_eq!(metrics[0].euler_characteristic, None);
     }
 
     #[test]

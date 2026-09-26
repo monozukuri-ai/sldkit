@@ -68,6 +68,7 @@ include = [
     { path = "viewer/src/**/*", format = "sdist" },
     { path = "python/sldkit/viewer/_assets/*", format = ["sdist", "wheel"] },
     { path = "scripts/capture_drawing_ground_truth.ps1", format = "sdist" },
+    { path = "scripts/capture_assembly_transforms.ps1", format = "sdist" },
     { path = "scripts/compare_drawing_structures.py", format = "sdist" },
     { path = "scripts/capture_step_geometry.py", format = "sdist" },
     { path = "scripts/nurbs_geometry.py", format = "sdist" },

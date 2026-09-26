@@ -116,6 +116,39 @@ def test_native_rectangle_retains_source_unknowns_and_closes(trim):
     assert model == before
 
 
+def test_published_derived_intervals_are_checked_independently(trim):
+    model, face = rectangle_model()
+    for edge in model["edges"]:
+        edge["derived_parameter_interval"] = {
+            "parameter_range": [0.0, 1.0],
+            "method": "line_projection",
+            "tolerance_mm": 1e-7,
+            "max_endpoint_error_mm": 0.0,
+        }
+    # The same directed boundary may use an edge with reversed endpoints.
+    edge = model["edges"][0]
+    edge["start_vertex_id"], edge["end_vertex_id"] = (
+        edge["end_vertex_id"],
+        edge["start_vertex_id"],
+    )
+    edge["derived_parameter_interval"]["parameter_range"] = [1.0, 0.0]
+    model["coedges"][0]["sense"] = "reversed"
+    assert trim.native_boundary(model, face, 1e-5, 1e-10)["edges"][0]["interval"] == [
+        0,
+        1,
+    ]
+    for field, value in [
+        ("parameter_range", [0, 1]),
+        ("method", "nurbs_support_endpoints"),
+        ("tolerance_mm", -1),
+        ("max_endpoint_error_mm", 1),
+    ]:
+        damaged = copy.deepcopy(model)
+        damaged["edges"][0]["derived_parameter_interval"][field] = value
+        with pytest.raises(ValueError, match="published derived interval"):
+            trim.native_boundary(damaged, face, 1e-5, 1e-10)
+
+
 @pytest.mark.parametrize(
     "case",
     [

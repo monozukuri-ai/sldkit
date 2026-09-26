@@ -179,6 +179,25 @@ pub struct GeometryCoedge {
     pub provenance: GeometryEntityProvenance,
 }
 
+/// Bounded derivation of a usable interval, separate from native trim fields.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryIntervalMethod {
+    LineProjection,
+    NurbsSupportEndpoints,
+}
+
+/// Endpoint-derived parameters in the carrier's own parameterization.
+/// These are not stored source trim values or a general curve projection.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GeometryDerivedInterval {
+    /// Ordered from the public edge's start vertex to its end vertex.
+    pub parameter_range: [f64; 2],
+    pub method: GeometryIntervalMethod,
+    pub tolerance_mm: f64,
+    pub max_endpoint_error_mm: f64,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GeometryEdge {
     pub id: String,
@@ -188,6 +207,8 @@ pub struct GeometryEdge {
     pub parameter_range: Option<[f64; 2]>,
     pub tolerance: Option<f64>,
     pub provenance: GeometryEntityProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_parameter_interval: Option<GeometryDerivedInterval>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -84,6 +84,11 @@ is a decoder grouping. Its count and kind do not establish the number or
 solid/sheet classification of native bodies. Inspect provenance and losses
 before using body counts or Euler values as solid-validity checks.
 
+The disk-face `V-E+F` census is withheld (`euler_characteristic=None`) when a
+face has multiple loops, no loop, or isolated vertex uses. In particular, a
+face with holes must not produce a misleading Euler value from that formula.
+Even a reported value is a topology diagnostic, not solid-validity certification.
+
 Surface, curve, and pcurve carriers have a domain, a source carrier kind, a
 tagged parameter object, and entity provenance. Analytic carriers and NURBS are
 returned without tessellating them into a replacement shape. Procedural
@@ -103,6 +108,29 @@ length instead of being copied into JSON.
 
 Configuration body membership uses three states: a list is resolved
 membership, an empty list is resolved absence, and `None` is unresolved.
+
+### Endpoint-derived edge intervals
+
+`GeometryEdge.parameter_range` retains the decoder's range unchanged. When it
+is absent, the adapter may additionally expose `derived_parameter_interval`:
+
+- `parameter_range`: directed from the edge's start vertex to its end vertex;
+- `method`: `line_projection` or `nurbs_support_endpoints`;
+- `tolerance_mm` and `max_endpoint_error_mm`: the endpoint verification evidence.
+
+Line projection supports non-unit directions. The NURBS profile requires a
+clamped nonperiodic curve with finite data, positive weights where present,
+and unambiguous correspondence of the vertices to the full support endpoints.
+Both methods require endpoint errors at most `1e-7` mm. Off-curve, coincident,
+ambiguous, partially trimmed NURBS, circular, and other unsupported cases keep
+this field absent. This does not infer stored trim metadata, inner/outer loop
+roles, or surface UV bounds.
+
+Python's `edge.effective_parameter_range` returns the existing decoded range
+first, otherwise this derived interval, otherwise `None`. Inspect
+`derived_parameter_interval` when the distinction matters. Coedge reversal
+reverses traversal; it does not change the edge's endpoint ordering. The new
+field is optional in JSON and older JSON remains readable.
 
 ## Stream identity and fidelity
 
@@ -256,6 +284,8 @@ This bounded diagnostic accepts one four-edge outer wire per selected NURBS
 face, clamped nonperiodic support, and derived linear isoparametric pcurves.
 Native curve intervals are derived from vertex positions by line projection or
 unique full-support NURBS endpoint matching. Source ranges stay unchanged.
+When the public API supplies a derived interval, the diagnostic independently
+checks its parameters, method, and endpoint error, and retains it in the report.
 Present source ranges, alternate use curves, holes, seams, partial NURBS trims,
 and other pcurve parameterizations are rejected until their semantics are
 validated. STEP pcurves must be lines or nonrational two-pole degree-1 splines.
@@ -309,6 +339,13 @@ their independently verified read domains remain in byte accounting.
 The controlled NURBS boundary's four directed uses now agree with STEP.
 Numeric source trim ranges and loop roles remain uncertified; the separate
 source trim gate stays false.
+
+Vertexless ring edges are additionally supported for exact unbounded circle
+carriers in this same native profile. Their source null vertices remain null
+during FIN validation. The graph adapter emits explicitly derived circle seam
+vertices and periodic seam edges where required; it does not claim these are
+native vertex/edge records. Elliptic/NURBS rings and unsupported FIN links remain
+outside this extension. See the patch record for the complete bounded checks.
 
 The current profile decodes only modern Part containers. Assemblies, drawings,
 legacy OLE2 geometry, feature-history reconstruction, healing, native writing,

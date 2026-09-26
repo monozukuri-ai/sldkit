@@ -12,6 +12,25 @@ contain this implementation, without a developer-local Cargo override.
 
 ## Parsing changes
 
+The unreleased circle-ring update in `brep/native_fin.rs` accepts vertexless
+native ring edges within the already verified hierarchy/schema profile. Both
+FIN endpoints must be the native null sentinel; reciprocal opposite FINs must
+use the same exact, unbounded circle carrier and opposite senses. Visible loops
+must contain one self-linked FIN, with a valid face owner. A sheet may have one
+dummy counterpart. Fin-local curves, radial rings, dangling links, non-circle
+carriers, and bounded wrappers still withhold the entire FIN arena. Ordinary
+FINs still pass through `parasolid_core::partial::native_fin` unchanged.
+
+This is a CadIr graph adaptation, not another binary reader. It preserves
+native null vertices and exact read spans; the graph builder's existing
+`derived_closed_circle_seam` vertices and `derived_periodic_seam` edges represent
+closed circles/periodic faces in its endpoint-based topology. Those derived
+entities must not be counted as source vertices/edges. The
+[Parasolid XT Format Reference, April 2008](https://ww3.cad.de/foren/ubb/uploads/schulze/XT_Format_April_2008_tcm73-62642.pdf),
+logical pages 23–24, describes vertexless ring edges and single-FIN loops.
+Synthetic malformed-graph tests and local TEST1/TEST2 decoding cover this
+adapter; independent SolidWorks oracle captures for those Parts are pending.
+
 The unreleased ownership update extends the bounded DisplayLists reader to
 reused MFC face-class tags established inside a validated declared face interval.
 New tables retain header/channel validation and cannot duplicate existing ones.

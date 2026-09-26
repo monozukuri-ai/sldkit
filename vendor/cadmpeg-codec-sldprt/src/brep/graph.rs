@@ -902,7 +902,7 @@ pub fn decode_bodies(bodies: &[(&[u8], &StreamHeader)], stream: &str) -> Brep {
         // The verified native profile stores a FIN's end vertex and forward
         // link, unlike the legacy graph/writer's start-vertex convention.
         // Read spans were collected from the original table above.
-        unresolved_native_fins = super::native_fin::normalize_or_withhold(&mut tables);
+        unresolved_native_fins = super::native_fin::normalize_or_withhold(&mut tables, &carriers);
     }
     let mut decoded = decode_graph(&carriers, &tables, facts, stream);
     decoded.stats.unresolved_native_fins = unresolved_native_fins;

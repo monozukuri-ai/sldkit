@@ -31,6 +31,22 @@ Useful first pairs are:
 Separate files are required. Re-saving one pathname in place loses the exact
 baseline bytes needed by the differential.
 
+### Next decoding sequence
+
+Until real captures are available, retain the existing XML/carrier inventory
+and its unresolved membership. The first semantic profile should use one sheet,
+one asymmetric Part, and one standard view. Capture separate variants for an
+X-only/Y-only position change, scale change, and view rotation. These distinguish
+coordinate direction, units, scale inheritance, and rotation before projection
+or derived views are added. Next add one projected view and verify its base-view
+relationship, then one note with distinctive text. Dimensions and tables follow
+only after view ownership and binary record boundaries can be verified.
+
+For every field, require repeatable single-operation differences, exact native
+byte ranges, and independent API values. A changed whole-stream hash or an XML
+record class alone is insufficient. The Assembly placement capture workflow is
+documented separately in [assembly-validation.md](assembly-validation.md).
+
 ## Capturing SolidWorks API facts
 
 On Windows with SolidWorks installed, close every existing SolidWorks session

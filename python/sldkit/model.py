@@ -1700,6 +1700,39 @@ class GeometryCoedge:
         return result
 
 
+class GeometryIntervalMethod(str, Enum):
+    LINE_PROJECTION = "line_projection"
+    NURBS_SUPPORT_ENDPOINTS = "nurbs_support_endpoints"
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryDerivedInterval:
+    """Endpoint-derived parameters; these do not certify stored source trim."""
+
+    parameter_range: tuple[float, float]
+    method: GeometryIntervalMethod
+    tolerance_mm: float
+    max_endpoint_error_mm: float
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryDerivedInterval:
+        bounds = value["parameter_range"]
+        return cls(
+            parameter_range=(float(bounds[0]), float(bounds[1])),
+            method=GeometryIntervalMethod(value["method"]),
+            tolerance_mm=float(value["tolerance_mm"]),
+            max_endpoint_error_mm=float(value["max_endpoint_error_mm"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "parameter_range": list(self.parameter_range),
+            "method": self.method.value,
+            "tolerance_mm": self.tolerance_mm,
+            "max_endpoint_error_mm": self.max_endpoint_error_mm,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class GeometryEdge:
     id: str
@@ -1709,6 +1742,16 @@ class GeometryEdge:
     parameter_range: tuple[float, float] | None
     tolerance: float | None
     provenance: GeometryEntityProvenance
+    derived_parameter_interval: GeometryDerivedInterval | None = None
+
+    @property
+    def effective_parameter_range(self) -> tuple[float, float] | None:
+        """Prefer decoded parameters, then the explicitly derived interval."""
+        if self.parameter_range is not None:
+            return self.parameter_range
+        if self.derived_parameter_interval is not None:
+            return self.derived_parameter_interval.parameter_range
+        return None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> GeometryEdge:
@@ -1720,10 +1763,15 @@ class GeometryEdge:
             parameter_range=_optional_float_pair(value.get("parameter_range")),
             tolerance=_optional_float(value.get("tolerance")),
             provenance=GeometryEntityProvenance.from_dict(value["provenance"]),
+            derived_parameter_interval=(
+                GeometryDerivedInterval.from_dict(value["derived_parameter_interval"])
+                if value.get("derived_parameter_interval") is not None
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "id": self.id,
             "curve_id": self.curve_id,
             "start_vertex_id": self.start_vertex_id,
@@ -1734,6 +1782,11 @@ class GeometryEdge:
             "tolerance": self.tolerance,
             "provenance": self.provenance.to_dict(),
         }
+        if self.derived_parameter_interval is not None:
+            result["derived_parameter_interval"] = (
+                self.derived_parameter_interval.to_dict()
+            )
+        return result
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,10 +24,16 @@ Modern parsing is limited to observed layouts. Internal version values are
 evidence attached to an input, not a promise that every file from a product year
 or every intermediate version is supported.
 
-The controlled Drawing capture and differential scripts are validation tools,
+The controlled Assembly and Drawing capture/differential scripts are validation tools,
 not runtime format support. Their output can establish external fixture facts;
 it does not make dimensions, view transforms, or candidate binary streams
 decoded capabilities.
+
+The bounded edge API also exposes independently labelled endpoint-derived
+parameter intervals for lines and eligible full-support NURBS curves; see
+[geometry.md](geometry.md#endpoint-derived-edge-intervals). This does not certify
+source trim ranges or inner/outer loop roles. Assembly placement evidence can be
+collected with the [controlled capture workflow](assembly-validation.md).
 
 Legacy property-set and preview decoding is container- and specification-based.
 Configuration-header decoding is currently limited to the observed internal

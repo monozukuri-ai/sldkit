@@ -114,6 +114,37 @@ def _namespace() -> dict:
     return runpy.run_path(str(ROOT / "scripts/validate_geometry_corpus.py"))
 
 
+def test_edge_derived_interval_is_optional_and_does_not_replace_source_range():
+    from dataclasses import replace
+
+    import sldkit
+
+    # This models an older JSON producer that does not include the new field.
+    source = {
+        "id": "edge",
+        "curve_id": "curve",
+        "start_vertex_id": "a",
+        "end_vertex_id": "b",
+        "parameter_range": None,
+        "tolerance": None,
+        "provenance": {"exactness": "derived", "source_record_ids": []},
+    }
+    old = sldkit.GeometryEdge.from_dict(source)
+    assert old.effective_parameter_range is None
+    assert "derived_parameter_interval" not in old.to_dict()
+    derived = sldkit.GeometryDerivedInterval(
+        (3.0, 1.0), sldkit.GeometryIntervalMethod.LINE_PROJECTION, 1e-7, 0.0
+    )
+    edge = replace(old, derived_parameter_interval=derived)
+    assert edge.parameter_range is None
+    assert edge.effective_parameter_range == (3.0, 1.0)
+    assert sldkit.GeometryEdge.from_dict(edge.to_dict()) == edge
+    assert replace(edge, parameter_range=(8.0, 9.0)).effective_parameter_range == (
+        8.0,
+        9.0,
+    )
+
+
 def _carrier(identity: str, domain: str, definition: dict) -> dict:
     return {
         "id": identity,

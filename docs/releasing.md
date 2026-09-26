@@ -67,3 +67,52 @@ omits fuzz and workspace-only CLI sources.
 verified bundle through GitHub Release and then PyPI. Check the downloaded
 files' SHA-256 and licensing metadata against the qualified bundle. Do not
 overwrite an existing release as part of a licensing change.
+
+## PyPI Trusted Publisher setup
+
+Before the first tag release, register a **pending publisher** on the PyPI
+account's [Publishing page](https://pypi.org/manage/account/publishing/).
+Use these GitHub Actions settings:
+
+| PyPI field | Value |
+| --- | --- |
+| PyPI project name | `sldkit` |
+| Owner | `monozukuri-ai` |
+| Repository name | `sldkit` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+The workflow field is the filename, without `.github/workflows/`, rather than
+the workflow's display name (`Release`). Use the production PyPI site; TestPyPI
+publisher registrations are separate. A pending publisher creates the project
+on its first successful publication. For an existing project, manage publishers
+on the project's [Publishing page](https://pypi.org/manage/project/sldkit/settings/publishing/).
+Registration requires a maintainer's PyPI login. The workflow already grants
+`id-token: write` to the publishing job and uses the `pypi` environment.
+
+See PyPI's instructions for [new projects](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+and [existing projects](https://docs.pypi.org/trusted-publishers/adding-a-publisher/).
+
+## Recovering a PyPI authentication failure
+
+`invalid-publisher` means that PyPI received a valid OIDC token but could not
+match it to a registered publisher. Compare the failed job's repository,
+workflow filename and environment claims with the settings above, including
+after a repository move or rename. Correct the registration on PyPI; changing
+the package version or license metadata does not fix this authentication error.
+See [PyPI's troubleshooting guide](https://docs.pypi.org/trusted-publishers/troubleshooting/).
+
+If only `Publish to PyPI` failed at token exchange and PyPI has no files for the
+version, fix the publisher and rerun the failed job using the existing verified
+bundle. Replace `RUN_ID` with the failed Release workflow run's numeric ID:
+
+```bash
+gh run rerun RUN_ID --repo monozukuri-ai/sldkit --failed
+```
+
+The GitHub Release may already be public. Keep its tag and artifacts intact;
+rerunning all jobs would rebuild and upload them again. `workflow_dispatch`
+does not publish. If an upload partially succeeded, compare the existing PyPI
+files and hashes with the verified bundle before retrying; the publish action
+does not skip existing files. After recovery, confirm that PyPI has all three
+wheels and the sdist with the same SHA-256 hashes as the GitHub Release.

@@ -50,6 +50,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = sldkit_parser::probe_bytes(data, &limits);
     let _ = sldkit_parser::inspect_bytes(data, None, &limits);
     let _ = sldkit_parser::parse_bytes(data, None, &limits);
+    let _ = sldkit_parser::decode_geometry_bytes(data, Some("fuzz.SLDPRT"), &limits);
+    let _ = sldkit_parser::decode_drawing_structure_bytes(data, Some("fuzz.SLDDRW"), &limits);
     if let Some(candidate) = modern_xml_candidate(data) {
         let _ = sldkit_parser::parse_bytes(&candidate, Some("fuzz.SLDPRT"), &limits);
     }

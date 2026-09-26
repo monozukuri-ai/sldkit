@@ -226,6 +226,38 @@ def native_boundary(
         evaluate, interval, axis = curve_interval(
             carrier["definition"], endpoints, position_tolerance
         )
+        published_interval = edge.get("derived_parameter_interval")
+        if published_interval is not None:
+            published = list(map(finite, published_interval["parameter_range"]))
+            if coedge["sense"] == "reversed":
+                published.reverse()
+            method = (
+                "line_projection"
+                if carrier["definition"]["kind"] == "line"
+                else "nurbs_support_endpoints"
+            )
+            require(
+                len(published) == 2
+                and published_interval["method"] == method
+                and all(
+                    math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12)
+                    for a, b in zip(published, interval, strict=True)
+                ),
+                "published derived interval disagrees with independent evaluation",
+            )
+            tolerance = finite(published_interval["tolerance_mm"])
+            error = finite(published_interval["max_endpoint_error_mm"])
+            evaluated_error = max(
+                math.dist(evaluate(t)[0], p)
+                for t, p in zip(published, endpoints, strict=True)
+            )
+            require(
+                0 < tolerance <= position_tolerance
+                and 0 <= error <= tolerance
+                and evaluated_error <= tolerance
+                and math.isclose(error, evaluated_error, rel_tol=1e-6, abs_tol=1e-12),
+                "published derived interval has invalid endpoint error evidence",
+            )
         require(len(coedge["pcurves"]) == 1, "expected one pcurve per coedge")
         use = coedge["pcurves"][0]
         pcurve = tables["carriers"][use["pcurve_id"]]
@@ -263,6 +295,7 @@ def native_boundary(
                 "uv_evaluate": uv_evaluate,
                 "uv_endpoints": [uv_evaluate(t)[0] for t in interval],
                 "source_ranges": ranges,
+                "published_derived_interval": published_interval,
                 "pcurve_provenance": pcurve.get("provenance"),
             }
         )
@@ -528,6 +561,7 @@ def compare_edge(
         ),
         "step_directed_parameter_range": reference["interval"],
         "source_ranges": native["source_ranges"],
+        "published_derived_interval": native.get("published_derived_interval"),
         "pcurve_provenance": native["pcurve_provenance"],
         "checks": checks,
         "derived_boundary_gate_passed": all(c["passed"] for c in checks.values()),

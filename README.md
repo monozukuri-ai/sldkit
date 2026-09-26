@@ -117,7 +117,7 @@ see [geometry fidelity](docs/geometry.md).
 
 `sldkit-parser` uses the published Rust `parasolid-core` crate for embedded
 Parasolid headers and shared partial topology/geometry readers. No Python `parasolid-kit` installation or adjacent
-checkout is required. See the [migration boundary](docs/geometry.md#parasolid-dependency).
+checkout is required. See the [dependency boundary](docs/geometry.md#parasolid-dependency).
 
 `sldkit` owns SolidWorks-specific parsing and source models. It does not depend
 on `cad3d-ir`, CadQuery, Open CASCADE, a vendor SDK, or COM. The opt-in Python
@@ -150,6 +150,9 @@ or no geometry; saved images are labeled separately. Assembly placement and
 Drawing entity rendering remain unsupported. See [viewer behavior](docs/viewer.md).
 
 ## Development
+
+See the [developer documentation](docs/development/README.md) for independent
+validation, release checks, and the development script catalog.
 
 ```bash
 cargo test --workspace

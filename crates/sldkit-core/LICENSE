@@ -145,7 +145,7 @@ commercial agreements, subject to the exceptions below.
 
 ## Shared readers and bundled code
 
-- `parasolid-core` 0.2.0, MIT AND Apache-2.0, from
+- `parasolid-core` 0.3.2, MIT AND Apache-2.0, from
   [parasolid-kit](https://github.com/monozukuri-ai/parasolid-kit).
   `LICENSES/parasolid-core-MIT.txt` preserves its MIT text. Adopted partial
   readers retain Apache-2.0; their provenance is reproduced in
@@ -488,7 +488,7 @@ The **licensor** is the individual or entity offering these terms, and the **sof
 
 The following Rust crates are compiled into the modern Part geometry decoder:
 
-- `parasolid-core` 0.2.0 — MIT AND Apache-2.0 (headers and shared partial readers)
+- `parasolid-core` 0.3.2 — MIT AND Apache-2.0 (published registry crate)
 - `cadmpeg-codec-sldprt` 0.5.3+sldkit.4 — Apache-2.0 (patched source)
 - `cadmpeg-container` 0.5.3 — Apache-2.0
 - `cadmpeg-core` 0.5.3 — Apache-2.0
@@ -509,6 +509,9 @@ generated inventory and full notices are in `rust-dependencies.json` and
 `parasolid-core` is published from
 <https://github.com/monozukuri-ai/parasolid-kit>. Its copyright and MIT license
 are included in [`parasolid-core-MIT.txt`](parasolid-core-MIT.txt).
+The registry archive checksum is pinned in all three Cargo lockfiles and
+included in the generated dependency catalog. Shared-reader changes are
+maintained in parasolid-kit and consumed through the published crate.
 
 The adopted partial-reader files in parasolid-core remain Apache-2.0 licensed;
 its `PARTIAL_READERS.md` records their origin and modifications. The Apache text
@@ -571,9 +574,15 @@ configuration selection and unit conversion around these shared readers.
   referenced records, and apply recognized point updates. It does not implement
   arbitrary deletes, replacement topology, or undocumented delta opcodes.
 - Native BODY/REGION/SHELL ownership and FIN normalization retain the exact
-  `SCH_3701229_37102_13006` admission and link consistency checks. Incomplete
+  `SCH_3701229_37102_13006` and `SCH_3601228_36001_13006` admission and link
+  consistency checks. After hierarchy recovery, `native_fin::retain_face_fins`
+  selects the current face loops and their opposite boundary dummies before
+  normalization, excluding unreachable saved-journal FINs. Missing records,
+  shared loops, cyclic ownership, or broken opposite links fail without changing
+  the table. This selection does not replay journal topology updates. Incomplete
   opposite/radial/vertex evidence withholds normalized FIN topology.
 - Analytic and NURBS readers return source-unit parameters and Euclidean poles.
+  Analytic records also retain the unmodified `+`/`-` orientation byte.
   Length conversion belongs to the caller; knots, angles, directions, weights,
   and surface UV coordinates are not length-scaled. The neutral partial types
   describe standalone carriers, not the complete native B-Rep graph.
@@ -643,7 +652,7 @@ checks and are not claimed as a public golden corpus.
 
 {
   "schema_version": 1,
-  "notices_sha256": "75c24eeecbbf736f330dcd3df8c170d704e936b91fd96cce409aa6bb6a01f9c2",
+  "notices_sha256": "08c26f9e6a5b3c01fa127e73c179f3ca69ca3f71f70fe6c3b639f842cf90f254",
   "packages": [
     {
       "name": "adler2",
@@ -1693,9 +1702,9 @@ checks and are not claimed as a public golden corpus.
     },
     {
       "name": "parasolid-core",
-      "version": "0.2.0",
+      "version": "0.3.2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "checksum": "24abe504c1f489a216355c371a3e51d6aa62fbb4f55fa797ceddfe89b8debfb8",
+      "checksum": "902bbbf1dbd37e932688972ba13f821e6ae369b6dbf6c3646c3b11b0bf1038fd",
       "lockfiles": [
         "Cargo.lock",
         "vendor/cadmpeg-codec-sldprt/Cargo.lock",
@@ -4817,7 +4826,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== parasolid-core 0.2.0: LICENSE =====
+===== parasolid-core 0.3.2: LICENSE =====
 
 MIT License
 
@@ -4842,7 +4851,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== parasolid-core 0.2.0: LICENSE-APACHE-2.0 =====
+===== parasolid-core 0.3.2: LICENSE-APACHE-2.0 =====
 
                                  Apache License
                            Version 2.0, January 2004

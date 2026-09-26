@@ -41,7 +41,7 @@ sldkit-rs drawing drawing.SLDDRW --limits service
 `strict=True` accepts only `inventoried` and raises
 `DrawingStructureError` for `partial`, `unsupported`, `malformed`, or
 `rejected` while retaining the structured result on the exception. The current
-M6a slice always reports `partial` because its exclusive byte-partition gate is
+profile always reports `partial` because its exclusive byte-partition gate is
 not yet complete; `inventoried` is reserved for that future gate.
 
 ## Record inventory
@@ -90,13 +90,12 @@ and deterministic comparison, but it is not renderable Drawing support.
 
 ## Current boundary
 
-The repository now provides a path-free SolidWorks API capture contract and a
-deterministic comparator for controlled single-variable Drawing pairs. See
-[Controlled Drawing validation](drawing-validation.md). No Windows/SolidWorks
-capture or controlled native fixture is committed by this tooling change, so
-M6a still requires measured cases for multiple sheets, dependent view types,
-dimensions, annotations, tables, and sketches. Binary carrier record framing
-and an exclusive classified/unclassified byte map must also be established
-before the M6a completion gate can pass. M6b will separately add verified
-placement, projection, and renderable primitives while retaining these source
-identities.
+Projection/view transforms, Drawing entities, dimensions, annotations, and tables
+remain unsupported. Source inventory and candidate-stream hashes do not establish
+renderable Drawing semantics.
+
+For contributors collecting independent evidence, the
+[Drawing validation guide](development/drawing-validation.md) describes a
+path-free SolidWorks API capture contract and a deterministic comparator for
+controlled single-variable Drawing pairs. Captures and native fixtures are not
+distributed with the project.

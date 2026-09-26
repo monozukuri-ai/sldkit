@@ -161,6 +161,26 @@ pub struct GeometryLoop {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vertex_uses: Vec<GeometryVertexUse>,
     pub provenance: GeometryEntityProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_boundary_role: Option<GeometryDerivedLoopRole>,
+}
+
+/// Geometric classification of a validated simple analytic boundary. This does
+/// not replace an explicit source role or certify a stored classification flag.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GeometryDerivedLoopRole {
+    pub role: String,
+    pub method: GeometryLoopRoleMethod,
+    /// Exact analytic line/arc integral, oriented by the face normal.
+    pub signed_area_mm2: f64,
+    pub tolerance_mm: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryLoopRoleMethod {
+    PlanarAnalyticWinding,
+    CylindricalAnalyticChart,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -185,6 +205,12 @@ pub struct GeometryCoedge {
 pub enum GeometryIntervalMethod {
     LineProjection,
     NurbsSupportEndpoints,
+    /// Partial interval with a strictly monotone control-coordinate certificate.
+    NurbsMonotoneProjection,
+    /// Increasing angle selected by verified native edge direction.
+    ConicEndpoints,
+    /// One full turn beginning at the explicitly derived circle seam vertex.
+    ClosedCircleSeam,
 }
 
 /// Endpoint-derived parameters in the carrier's own parameterization.

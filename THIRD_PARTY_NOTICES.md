@@ -12,7 +12,7 @@ commercial agreements, subject to the exceptions below.
 
 ## Shared readers and bundled code
 
-- `parasolid-core` 0.2.0, MIT AND Apache-2.0, from
+- `parasolid-core` 0.3.2, MIT AND Apache-2.0, from
   [parasolid-kit](https://github.com/monozukuri-ai/parasolid-kit).
   `LICENSES/parasolid-core-MIT.txt` preserves its MIT text. Adopted partial
   readers retain Apache-2.0; their provenance is reproduced in

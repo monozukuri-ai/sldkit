@@ -2071,7 +2071,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== parasolid-core 0.2.0: LICENSE =====
+===== parasolid-core 0.3.2: LICENSE =====
 
 MIT License
 
@@ -2096,7 +2096,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== parasolid-core 0.2.0: LICENSE-APACHE-2.0 =====
+===== parasolid-core 0.3.2: LICENSE-APACHE-2.0 =====
 
                                  Apache License
                            Version 2.0, January 2004

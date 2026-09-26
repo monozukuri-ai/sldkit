@@ -1,7 +1,8 @@
 # Release checks
 
 Version 0.2.0 introduces the new-material licensing boundary described in
-[licensing](license.md) and pins the shared registry reader to `parasolid-core 0.2.0`.
+[licensing](../license.md). The shared reader dependency is pinned to
+the published `parasolid-core 0.3.2` crate without a local source patch.
 Keep previously published MIT and third-party permissions intact. Use a new
 version for corrections; do not replace existing public artifacts with different terms.
 
@@ -47,8 +48,10 @@ python scripts/smoke_wheel_artifact.py dist/release
 The wheel check requires Python 3.10+ ABI3, exact `License-Expression` and
 `License-File` declarations, canonical notice bytes and current viewer assets.
 The installed smoke also generates standalone HTML and checks its complete
-notice bundle outside the checkout. The sdist check checks the registry reader's
-version/checksum, Apache vendor boundary, source notices and required files.
+notice bundle outside the checkout. The sdist check verifies the reader's
+version, registry checksum and lockfile identity, Apache vendor boundary, source notices,
+and required files. Public documents and scripts must match the explicit lists
+in `pyproject.toml` and `scripts/verify_release_artifacts.py`.
 Private CAD files, corpus, references, internal notes and local preview output
 must remain outside both archives.
 

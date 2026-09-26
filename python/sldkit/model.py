@@ -1607,6 +1607,38 @@ class GeometryVertexUse:
         return result
 
 
+class GeometryLoopRoleMethod(str, Enum):
+    PLANAR_ANALYTIC_WINDING = "planar_analytic_winding"
+    CYLINDRICAL_ANALYTIC_CHART = "cylindrical_analytic_chart"
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryDerivedLoopRole:
+    """Geometric loop classification, separate from stored source fields."""
+
+    role: str
+    method: GeometryLoopRoleMethod
+    signed_area_mm2: float
+    tolerance_mm: float
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryDerivedLoopRole:
+        return cls(
+            str(value["role"]),
+            GeometryLoopRoleMethod(value["method"]),
+            float(value["signed_area_mm2"]),
+            float(value["tolerance_mm"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "method": self.method.value,
+            "signed_area_mm2": self.signed_area_mm2,
+            "tolerance_mm": self.tolerance_mm,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class GeometryLoop:
     id: str
@@ -1615,6 +1647,15 @@ class GeometryLoop:
     coedge_ids: tuple[str, ...]
     vertex_uses: tuple[GeometryVertexUse, ...]
     provenance: GeometryEntityProvenance
+    derived_boundary_role: GeometryDerivedLoopRole | None = None
+
+    @property
+    def effective_boundary_role(self) -> str:
+        if self.boundary_role != "unspecified":
+            return self.boundary_role
+        if self.derived_boundary_role is not None:
+            return self.derived_boundary_role.role
+        return self.boundary_role
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> GeometryLoop:
@@ -1622,6 +1663,11 @@ class GeometryLoop:
             id=str(value["id"]),
             face_id=str(value["face_id"]),
             boundary_role=str(value["boundary_role"]),
+            derived_boundary_role=(
+                GeometryDerivedLoopRole.from_dict(value["derived_boundary_role"])
+                if value.get("derived_boundary_role") is not None
+                else None
+            ),
             coedge_ids=tuple(str(item) for item in value.get("coedge_ids", [])),
             vertex_uses=tuple(
                 GeometryVertexUse.from_dict(item)
@@ -1641,6 +1687,8 @@ class GeometryLoop:
             result["coedge_ids"] = list(self.coedge_ids)
         if self.vertex_uses:
             result["vertex_uses"] = [item.to_dict() for item in self.vertex_uses]
+        if self.derived_boundary_role is not None:
+            result["derived_boundary_role"] = self.derived_boundary_role.to_dict()
         return result
 
 
@@ -1703,6 +1751,9 @@ class GeometryCoedge:
 class GeometryIntervalMethod(str, Enum):
     LINE_PROJECTION = "line_projection"
     NURBS_SUPPORT_ENDPOINTS = "nurbs_support_endpoints"
+    NURBS_MONOTONE_PROJECTION = "nurbs_monotone_projection"
+    CONIC_ENDPOINTS = "conic_endpoints"
+    CLOSED_CIRCLE_SEAM = "closed_circle_seam"
 
 
 @dataclass(frozen=True, slots=True)

@@ -48,8 +48,17 @@ def test_private_development_inputs_are_explicitly_excluded_from_artifacts():
 
 def test_public_documentation_is_included_only_in_the_source_distribution():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    includes = project["tool"]["maturin"]["include"]
-    assert {"path": "docs/**/*", "format": "sdist"} in includes
+    includes = [
+        entry
+        for entry in project["tool"]["maturin"]["include"]
+        if entry["path"].startswith("docs/")
+    ]
+    assert includes
+    for entry in includes:
+        assert entry["format"] == "sdist"
+        # Adding a local report must not silently expand the public payload.
+        assert not any(token in entry["path"] for token in ("*", "?", "["))
+        assert (ROOT / entry["path"]).is_file()
 
 
 def test_license_files_include_project_and_compiled_dependency_licenses():

@@ -128,6 +128,10 @@ fn native_sheet_body() -> Vec<u8> {
     for (offset, value) in [(16, 1), (18, 1), (22, 201)] {
         u16_at(&mut triangle, face + offset, value);
     }
+    // Native pointer nulls use 1, including the loop-list tail.
+    let loop_start = tables.loops[&20].offset + 2;
+    u16_at(&mut triangle, loop_start + 6, 1);
+    u16_at(&mut triangle, loop_start + 12, 1);
     // The generic writer fixture uses a start-vertex gauge and omits dummy
     // fins. Encode native FIN forward/backward/end vertices explicitly here.
     for i in 0..3_u16 {
@@ -141,15 +145,9 @@ fn native_sheet_body() -> Vec<u8> {
         ] {
             u16_at(&mut triangle, p + 2 + field * 2, value);
         }
-        triangle.extend(test_support::coedge(
-            70 + i,
-            1,
-            1,
-            50 + i,
-            30 + i,
-            40 + i,
-            true,
-        ));
+        let mut dummy = test_support::coedge(70 + i, 1, 1, 50 + i, 30 + i, 40 + i, true);
+        u16_at(&mut dummy, 8, 1);
+        triangle.extend(dummy);
     }
     data.extend(triangle);
     data

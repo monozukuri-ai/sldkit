@@ -147,7 +147,7 @@ fn unsupported_or_bounded_curves_do_not_prove_a_circle_ring() {
                     CarrierGeometry::Curve(CurveGeometry::Line {
                         origin: Point3::new(0.0, 0.0, 0.0),
                         direction: Vector3::new(1.0, 0.0, 0.0),
-                    })
+                    });
             }
             1 => carriers.curves.get_mut(&50).unwrap().parameter_range = Some([0.0, 1.0]),
             2 => {

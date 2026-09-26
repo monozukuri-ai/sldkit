@@ -13,11 +13,62 @@ import tomllib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_license import (  # noqa: E402
     PARASOLID_VERSION,
+    REGISTRY_SOURCE,
     ROOT,
     check_archive_licenses,
     check_viewer_assets,
     notice_bundle,
     read_toml,
+)
+
+SDIST_DOCS = frozenset(
+    (
+        "docs/README.md",
+        "docs/architecture.md",
+        "docs/compatibility.md",
+        "docs/development/README.md",
+        "docs/development/assembly-validation.md",
+        "docs/development/drawing-validation.md",
+        "docs/development/geometry-validation.md",
+        "docs/development/part-validation.md",
+        "docs/development/releasing.md",
+        "docs/drawing-structure.md",
+        "docs/geometry.md",
+        "docs/license.ja.md",
+        "docs/license.md",
+        "docs/parser-provenance.md",
+        "docs/project-scanning.md",
+        "docs/schemas/drawing-ground-truth.schema.json",
+        "docs/schemas/geometry-oracle.schema.json",
+        "docs/schemas/nurbs-geometry-oracle.schema.json",
+        "docs/schemas/nurbs-trim-oracle.schema.json",
+        "docs/viewer.md",
+    )
+)
+
+SDIST_SCRIPTS = frozenset(
+    (
+        "scripts/README.md",
+        "scripts/capture_assembly_transforms.ps1",
+        "scripts/capture_drawing_ground_truth.ps1",
+        "scripts/capture_part_orientation.swb",
+        "scripts/capture_step_geometry.py",
+        "scripts/check_license.py",
+        "scripts/compare_drawing_structures.py",
+        "scripts/nurbs_geometry.py",
+        "scripts/smoke_installed_package.py",
+        "scripts/smoke_wheel_artifact.py",
+        "scripts/sync_license_notices.py",
+        "scripts/test_assembly_capture.ps1",
+        "scripts/validate_geometry_oracle.py",
+        "scripts/validate_nurbs_geometry.py",
+        "scripts/validate_nurbs_trim.py",
+        "scripts/validate_part_boundaries.py",
+        "scripts/validate_part_orientation.py",
+        "scripts/validate_partial_nurbs.py",
+        "scripts/verify_release_artifacts.py",
+        "scripts/verify_release_version.py",
+    )
 )
 
 CAD_SUFFIXES = {".sldprt", ".sldasm", ".slddrw"}
@@ -61,6 +112,13 @@ def _check_names(path: Path, names: list[str]) -> None:
         parts = _normalized_parts(name)
         if parts and parts[0].lower() in FORBIDDEN_ROOTS:
             failures.append(f"forbidden directory: {name}")
+        if parts[:2] == ("vendor", "parasolid-core"):
+            failures.append(f"obsolete vendored shared reader: {name}")
+        if parts and parts[0] in {"docs", "scripts"}:
+            relative = "/".join(parts)
+            allowed = SDIST_DOCS if parts[0] == "docs" else SDIST_SCRIPTS
+            if relative not in allowed:
+                failures.append(f"unlisted documentation or script: {name}")
         if parts == ("preview.html",):
             failures.append(f"local viewer output: {name}")
         if PurePosixPath(name).suffix.lower() in CAD_SUFFIXES:
@@ -96,9 +154,9 @@ def _check_wheel(path: Path) -> None:
             for name in names
         ), path
         assert not any(
-            name.endswith("scripts/capture_drawing_ground_truth.ps1")
-            or name.endswith("scripts/compare_drawing_structures.py")
+            _normalized_parts(name)[0] in {"docs", "scripts"}
             for name in names
+            if _normalized_parts(name)
         ), path
         metadata_name = next(name for name in names if name.endswith("/METADATA"))
         metadata = email.parser.BytesParser().parsebytes(archive.read(metadata_name))
@@ -172,43 +230,14 @@ def _check_sdist(path: Path) -> None:
     normalized = {"/".join(_normalized_parts(name)) for name in names}
     assert "Cargo.toml" in normalized, path
     assert "pyproject.toml" in normalized, path
-    for required in (
-        "CLA.md",
-        "CONTRIBUTING.md",
-        "docs/license.md",
-        "docs/license.ja.md",
-        "docs/releasing.md",
-        "scripts/check_license.py",
-        "scripts/sync_license_notices.py",
-        "scripts/verify_release_artifacts.py",
-        "scripts/verify_release_version.py",
-    ):
+    for required in ("CLA.md", "CONTRIBUTING.md", *SDIST_DOCS, *SDIST_SCRIPTS):
         assert required in normalized, (path, required)
     assert "python/sldkit/__init__.py" in normalized, path
-    assert "docs/README.md" in normalized, path
-    assert "docs/architecture.md" in normalized, path
-    assert "docs/compatibility.md" in normalized, path
-    assert "docs/geometry.md" in normalized, path
-    assert "docs/viewer.md" in normalized, path
     for asset in ("viewer.html", "viewer.css", "viewer.js", "three-LICENSE.txt"):
         assert f"python/sldkit/viewer/_assets/{asset}" in normalized, (path, asset)
     assert "viewer/src/viewer.js" in normalized, path
     assert "viewer/package-lock.json" in normalized, path
     assert "LICENSES/three-MIT.txt" in normalized, path
-    assert "docs/drawing-structure.md" in normalized, path
-    assert "docs/drawing-validation.md" in normalized, path
-    assert "docs/schemas/drawing-ground-truth.schema.json" in normalized, path
-    assert "docs/schemas/geometry-oracle.schema.json" in normalized, path
-    assert "docs/schemas/nurbs-geometry-oracle.schema.json" in normalized, path
-    assert "docs/schemas/nurbs-trim-oracle.schema.json" in normalized, path
-    assert "docs/project-scanning.md" in normalized, path
-    assert "docs/parser-provenance.md" in normalized, path
-    assert "scripts/capture_drawing_ground_truth.ps1" in normalized, path
-    assert "scripts/compare_drawing_structures.py" in normalized, path
-    assert "scripts/capture_step_geometry.py" in normalized, path
-    assert "scripts/nurbs_geometry.py" in normalized, path
-    assert "scripts/validate_nurbs_geometry.py" in normalized, path
-    assert "scripts/validate_nurbs_trim.py" in normalized, path
     assert "vendor/cadmpeg-codec-sldprt/src/brep/native_fin.rs" in normalized, path
     assert "LICENSE" in normalized, path
     assert "LICENSES/Apache-2.0.txt" in normalized, path
@@ -227,13 +256,16 @@ def _check_sdist(path: Path) -> None:
 def _check_parasolid_dependency(
     workspace_source: str, vendor_source: str, lock_source: str
 ) -> None:
-    workspace = tomllib.loads(workspace_source)["workspace"]
+    manifest = tomllib.loads(workspace_source)
+    workspace = manifest["workspace"]
     vendor = tomllib.loads(vendor_source)
     assert workspace["dependencies"]["parasolid-core"] == "=" + PARASOLID_VERSION
-    assert (
-        vendor["dependencies"]["parasolid-core"]["version"] == "=" + PARASOLID_VERSION
-    )
+    assert vendor["dependencies"]["parasolid-core"] == {
+        "version": "=" + PARASOLID_VERSION
+    }
     assert vendor["package"]["license"] == "Apache-2.0"
+    for source in (manifest, vendor):
+        assert "parasolid-core" not in source.get("patch", {}).get("crates-io", {})
     actual = [
         p
         for p in tomllib.loads(lock_source)["package"]
@@ -245,8 +277,10 @@ def _check_parasolid_dependency(
         if p["name"] == "parasolid-core"
     ]
     assert len(actual) == len(expected) == 1
+    assert actual[0].get("source") == REGISTRY_SOURCE
+    assert len(actual[0].get("checksum", "")) == 64
     for field in ("version", "source", "checksum"):
-        assert actual[0][field] == expected[0][field], (field, actual[0])
+        assert actual[0].get(field) == expected[0].get(field), (field, actual[0])
 
 
 def main() -> None:

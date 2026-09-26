@@ -33,7 +33,7 @@ The bounded edge API also exposes independently labelled endpoint-derived
 parameter intervals for lines and eligible full-support NURBS curves; see
 [geometry.md](geometry.md#endpoint-derived-edge-intervals). This does not certify
 source trim ranges or inner/outer loop roles. Assembly placement evidence can be
-collected with the [controlled capture workflow](assembly-validation.md).
+collected with the [controlled capture workflow](development/assembly-validation.md).
 
 Legacy property-set and preview decoding is container- and specification-based.
 Configuration-header decoding is currently limited to the observed internal

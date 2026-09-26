@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two M6a Drawing inventories and optional SolidWorks API captures.
+"""Compare two Drawing inventories and optional SolidWorks API captures.
 
 The report is deliberately evidential: XML records are matched by source fields
 and exact record hashes, while candidate binary streams are compared only as
@@ -843,7 +843,7 @@ def decode_path(path: Path, profile: str) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Compare exact M6a Drawing inventory evidence"
+        description="Compare exact Drawing inventory evidence"
     )
     parser.add_argument("baseline", type=Path)
     parser.add_argument("variant", type=Path)

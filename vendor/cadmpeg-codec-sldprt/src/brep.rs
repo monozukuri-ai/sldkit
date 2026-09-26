@@ -78,7 +78,8 @@ pub(crate) struct Carrier {
     pub frame: Option<(Point3, Vector3, Vector3)>,
     /// Native parameter interval when a bounded curve wrapper supplies one.
     pub parameter_range: Option<[f64; 2]>,
-    /// Whether neutral radius normalization reverses the surface parameter frame.
+    /// Whether native orientation and neutral radius normalization reverse the
+    /// source frame. Applied to curve geometry, or composed with FACE sense.
     pub orientation_reversed: bool,
 }
 
@@ -197,15 +198,31 @@ impl CarrierIndex {
 
 pub(crate) fn parse_carrier(body: &[u8], off: usize) -> Option<Carrier> {
     let record = parasolid_core::partial::analytic::parse_carrier(body, off)?;
+    let mut geometry = decode_carrier_values(record.tag, &record.values)?;
+    if record.orientation == b'-' {
+        // IR analytic curves carry their orientation in the direction/axis.
+        // Keep native edge endpoints and FIN senses in their source gauge.
+        let direction = match &mut geometry {
+            CarrierGeometry::Curve(CurveGeometry::Line { direction, .. }) => Some(direction),
+            CarrierGeometry::Curve(
+                CurveGeometry::Circle { axis, .. } | CurveGeometry::Ellipse { axis, .. },
+            ) => Some(axis),
+            _ => None,
+        };
+        if let Some(direction) = direction {
+            *direction = Vector3::new(-direction.x, -direction.y, -direction.z);
+        }
+    }
     Some(Carrier {
         attr: record.attr,
         offset: record.offset,
         end: record.end,
         read_spans: record.read_spans.into_iter().map(Into::into).collect(),
-        geometry: decode_carrier_values(record.tag, &record.values)?,
+        geometry,
         frame: surface_frame(record.tag, &record.values),
         parameter_range: None,
-        orientation_reversed: record.tag == tag::TORUS && record.values[6].is_sign_negative(),
+        orientation_reversed: (record.orientation == b'-')
+            ^ (record.tag == tag::TORUS && record.values[6].is_sign_negative()),
     })
 }
 
@@ -355,13 +372,27 @@ pub(crate) fn patch_compact_values(body: &mut [u8], attr: u16, values: &[f64]) -
     let Some(carrier) = carriers.curve(attr) else {
         return false;
     };
+    let Some(record) = parasolid_core::partial::analytic::parse_carrier(body, carrier.offset)
+    else {
+        return false;
+    };
+    if values.len() != record.values.len() {
+        return false;
+    }
     let Some(start) = carrier.end.checked_sub(values.len() * 8) else {
         return false;
     };
     let Some(bytes) = body.get_mut(start..carrier.end) else {
         return false;
     };
-    for (slot, value) in bytes.chunks_exact_mut(8).zip(values) {
+    for (index, (slot, value)) in bytes.chunks_exact_mut(8).zip(values).enumerate() {
+        // Callers serialize the oriented IR curve; retain the source marker
+        // while returning its direction/axis to the stored frame.
+        let value = if record.orientation == b'-' && (3..6).contains(&index) {
+            -*value
+        } else {
+            *value
+        };
         slot.copy_from_slice(&value.to_be_bytes());
     }
     true
@@ -436,6 +467,78 @@ mod tests {
 
         assert!(carriers.curve(7).is_some());
         assert!(carriers.curve(8).is_some());
+    }
+
+    #[test]
+    fn patch_negative_circle_retains_native_marker_and_oriented_axis() {
+        let values = [0., 0., 0., 0., 0., 1., 1., 0., 0., 0.002];
+        let mut bytes = compact_carrier(tag::CIRCLE, 7, &values);
+        let marker = bytes.len() - values.len() * 8 - 1;
+        bytes[marker] = b'-';
+        let curve = curve_by_attr(&bytes, 7).unwrap();
+        let (_, mut edited) = crate::writer::curve_values(&curve, 0.001).unwrap();
+        edited[9] = 0.004;
+        assert!(patch_compact_values(&mut bytes, 7, &edited));
+        assert_eq!(bytes[marker], b'-');
+        let raw = parasolid_core::partial::analytic::parse_carrier(&bytes, 0).unwrap();
+        assert_eq!(raw.values[5], 1.);
+        let CurveGeometry::Circle { axis, radius, .. } = curve_by_attr(&bytes, 7).unwrap() else {
+            panic!("expected circle");
+        };
+        assert_eq!(axis, Vector3::new(0., 0., -1.));
+        assert_eq!(radius, 4.);
+    }
+
+    #[test]
+    fn negative_analytic_orientation_preserves_curve_tangents_and_surface_senses() {
+        let cases = [
+            (tag::LINE, vec![0., 0., 0., 1., 0., 0.]),
+            (tag::CIRCLE, vec![0., 0., 0., 0., 0., 1., 1., 0., 0., 0.002]),
+            (
+                tag::ELLIPSE,
+                vec![0., 0., 0., 0., 0., 1., 1., 0., 0., 0.002, 0.001],
+            ),
+            (tag::PLANE, vec![0., 0., 0., 0., 0., 1., 1., 0., 0.]),
+            (
+                tag::CYLINDER,
+                vec![0., 0., 0., 0., 0., 1., 0.002, 1., 0., 0.],
+            ),
+            (
+                tag::TORUS,
+                vec![0., 0., 0., 0., 0., 1., -0.002, 0.001, 1., 0., 0.],
+            ),
+        ];
+        for (tag, values) in cases {
+            for tripled in [false, true] {
+                let mut bytes = if tripled {
+                    tripled_compact_carrier(tag, 7, [1; 5], &values, true)
+                } else {
+                    compact_carrier(tag, 7, &values)
+                };
+                let marker = bytes.len() - values.len() * 8 - 1;
+                bytes[marker] = b'-';
+                let raw = parasolid_core::partial::analytic::parse_carrier(&bytes, 0).unwrap();
+                assert_eq!(raw.orientation, b'-');
+                assert_eq!(raw.values, values);
+                let carrier = parse_carrier(&bytes, 0).unwrap();
+                assert_eq!(carrier.orientation_reversed, tag != tag::TORUS);
+                match carrier.geometry {
+                    CarrierGeometry::Curve(CurveGeometry::Line { direction, .. }) => {
+                        assert_eq!(direction, Vector3::new(-1., 0., 0.));
+                    }
+                    CarrierGeometry::Curve(
+                        CurveGeometry::Circle { axis, .. } | CurveGeometry::Ellipse { axis, .. },
+                    ) => {
+                        assert_eq!(axis, Vector3::new(0., 0., -1.));
+                    }
+                    CarrierGeometry::Surface(SurfaceGeometry::Plane { normal, .. }) => {
+                        assert_eq!(normal, Vector3::new(0., 0., 1.));
+                    }
+                    CarrierGeometry::Surface(_) => {}
+                    CarrierGeometry::Curve(_) => panic!("unexpected analytic carrier"),
+                }
+            }
+        }
     }
 
     #[test]

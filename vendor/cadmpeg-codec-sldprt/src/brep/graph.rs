@@ -902,7 +902,13 @@ pub fn decode_bodies(bodies: &[(&[u8], &StreamHeader)], stream: &str) -> Brep {
         // The verified native profile stores a FIN's end vertex and forward
         // link, unlike the legacy graph/writer's start-vertex convention.
         // Read spans were collected from the original table above.
-        unresolved_native_fins = super::native_fin::normalize_or_withhold(&mut tables, &carriers);
+        if parasolid_core::partial::native_fin::retain_face_fins(&mut tables) {
+            unresolved_native_fins =
+                super::native_fin::normalize_or_withhold(&mut tables, &carriers);
+        } else {
+            unresolved_native_fins = tables.coedges.len();
+            tables.coedges.clear();
+        }
     }
     let mut decoded = decode_graph(&carriers, &tables, facts, stream);
     decoded.stats.unresolved_native_fins = unresolved_native_fins;
@@ -1805,7 +1811,7 @@ fn decode_graph(
     let mut bound_faces = HashSet::new();
     out.face_atoms
         .retain(|atom| atom.target.is_some() && bound_faces.insert(atom.face_attr));
-    solve_face_orientation(&mut out);
+    solve_face_orientation(&mut out, native_hierarchy);
     synthesize_cylinder_seams(&mut out, &mut annotations, source_stream);
     synthesize_sphere_seams(&mut out, &mut annotations, source_stream);
     derive_planar_pcurves(&mut out, &mut annotations, source_stream);
@@ -2513,27 +2519,34 @@ fn derive_cylindrical_pcurves(
                     direction: cadmpeg_ir::math::Point2::new(sense, 0.0),
                 }
             }
-            CurveGeometry::Line { direction, .. }
-                if (direction.x * axis.x + direction.y * axis.y + direction.z * axis.z).abs()
-                    > 1.0 - 1e-9 =>
-            {
-                let Some(start) = position(&edge.start) else {
+            CurveGeometry::Line {
+                origin: curve_origin,
+                direction,
+            } => {
+                let rate = dot([direction.x, direction.y, direction.z], *axis);
+                let length = direction.x.hypot(direction.y).hypot(direction.z);
+                let transverse = (direction.x - rate * axis.x)
+                    .hypot(direction.y - rate * axis.y)
+                    .hypot(direction.z - rate * axis.z);
+                if !length.is_finite() || length <= 1e-12 || transverse > length * 1e-9 {
                     continue;
-                };
-                let d = [start.x - origin.x, start.y - origin.y, start.z - origin.z];
+                }
+                // Use the carrier's t=0 origin, not the edge's trimmed start:
+                // pcurve(t) and curve(t) must have the same parameterization.
+                let d = [
+                    curve_origin.x - origin.x,
+                    curve_origin.y - origin.y,
+                    curve_origin.z - origin.z,
+                ];
                 let v = dot(d, *axis);
                 let radial = [d[0] - v * axis.x, d[1] - v * axis.y, d[2] - v * axis.z];
+                if (radial.iter().map(|v| v * v).sum::<f64>().sqrt() - radius.abs()).abs() > 1e-6 {
+                    continue;
+                }
                 let u = dot(radial, cross).atan2(dot(radial, *u_reference));
                 PcurveGeometry::Line {
                     origin: cadmpeg_ir::math::Point2::new(u, v),
-                    direction: cadmpeg_ir::math::Point2::new(
-                        0.0,
-                        if dot([direction.x, direction.y, direction.z], *axis) >= 0.0 {
-                            1.0
-                        } else {
-                            -1.0
-                        },
-                    ),
+                    direction: cadmpeg_ir::math::Point2::new(0.0, rate),
                 }
             }
             CurveGeometry::Ellipse {
@@ -4018,7 +4031,12 @@ fn ruled_surface_line_pcurve(
     })
 }
 
-fn solve_face_orientation(out: &mut Brep) {
+fn solve_face_orientation(out: &mut Brep, native_hierarchy: bool) {
+    // Native FACE and carrier orientations are authoritative. The legacy
+    // adjacency heuristic cannot infer outward normals from FIN parity alone.
+    if native_hierarchy {
+        return;
+    }
     let loop_faces: HashMap<_, _> = out
         .loops
         .iter()
@@ -4247,13 +4265,18 @@ fn synthesize_cylinder_seams(
                 coedge.owner_loop = loop_a.clone();
                 coedge.previous = ring[(index + 3) % 4].clone();
                 coedge.next = ring[(index + 1) % 4].clone();
+                for field in ["owner_loop", "previous", "next"] {
+                    annotations.derived(&coedge.id, field);
+                }
             }
         }
         if let Some(lp) = out.loops.iter_mut().find(|lp| lp.id == loop_a) {
             lp.coedges = ring.to_vec();
+            annotations.derived(&lp.id, "coedges");
         }
         if let Some(face) = out.faces.iter_mut().find(|face| face.id == face_id) {
             face.loops = vec![loop_a];
+            annotations.derived(&face.id, "loops");
         }
         removed.insert(loop_b);
     }
@@ -5139,13 +5162,16 @@ mod tests {
             ..Default::default()
         };
 
-        super::solve_face_orientation(&mut brep);
+        super::solve_face_orientation(&mut brep, false);
         assert_eq!(brep.faces[0].sense, Sense::Forward);
         assert_eq!(brep.faces[1].sense, Sense::Reversed);
 
         brep.faces[1].sense = Sense::Reversed;
         brep.coedges[1].sense = Sense::Reversed;
-        super::solve_face_orientation(&mut brep);
+        super::solve_face_orientation(&mut brep, true);
+        assert_eq!(brep.faces[0].sense, Sense::Forward);
+        assert_eq!(brep.faces[1].sense, Sense::Reversed);
+        super::solve_face_orientation(&mut brep, false);
         assert_eq!(brep.faces[0].sense, Sense::Forward);
         assert_eq!(brep.faces[1].sense, Sense::Forward);
     }
@@ -5427,9 +5453,7 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn ambiguous_cylindrical_endpoint_withholds_the_derived_pcurve() {
-        use cadmpeg_ir::annotations::AnnotationBuilder;
+    fn cylindrical_pcurve_fixture() -> super::Brep {
         use cadmpeg_ir::geometry::{Curve, NurbsCurve, Surface};
         use cadmpeg_ir::ids::{CurveId, EdgeId, FaceId, LoopId, PointId, SurfaceId, VertexId};
         use cadmpeg_ir::topology::{Coedge, Edge, Face, Loop, Point, Sense, Vertex};
@@ -5443,7 +5467,7 @@ mod tests {
         let start_point = PointId("start-point".into());
         let end_point = PointId("end-point".into());
         let coedge_id = cadmpeg_ir::ids::CoedgeId("coedge".into());
-        let mut brep = super::Brep {
+        super::Brep {
             surfaces: vec![Surface {
                 id: surface_id.clone(),
                 geometry: cadmpeg_ir::geometry::SurfaceGeometry::Cylinder {
@@ -5531,12 +5555,65 @@ mod tests {
                 },
             ],
             ..Default::default()
-        };
+        }
+    }
+
+    #[test]
+    fn ambiguous_cylindrical_endpoint_withholds_the_derived_pcurve() {
+        use cadmpeg_ir::annotations::AnnotationBuilder;
+        let mut brep = cylindrical_pcurve_fixture();
         let mut annotations = AnnotationBuilder::new();
         let source_stream = annotations.stream("test");
         super::derive_cylindrical_pcurves(&mut brep, &mut annotations, source_stream);
 
         assert!(brep.pcurves.is_empty());
         assert_eq!(brep.stats.ambiguous_pcurve_parameters, 1);
+    }
+
+    #[test]
+    fn cylindrical_line_pcurve_keeps_carrier_parameter_origin_and_rate() {
+        use cadmpeg_ir::annotations::AnnotationBuilder;
+        use cadmpeg_ir::geometry::{CurveGeometry, PcurveGeometry};
+        use cadmpeg_ir::math::{Point3, Vector3};
+
+        for rate in [1.0, -1.0, 2.0, -0.5] {
+            let mut brep = cylindrical_pcurve_fixture();
+            brep.curves[0].geometry = CurveGeometry::Line {
+                origin: Point3::new(0.0, 1000.0, 17.0),
+                direction: Vector3::new(0.0, 0.0, rate),
+            };
+            // Trimmed vertices are deliberately away from the carrier origin.
+            brep.points[0].position = Point3::new(0.0, 1000.0, 17.0 + 3.0 * rate);
+            brep.points[1].position = Point3::new(0.0, 1000.0, 17.0 + 8.0 * rate);
+            let mut annotations = AnnotationBuilder::new();
+            let stream = annotations.stream("test");
+            super::derive_cylindrical_pcurves(&mut brep, &mut annotations, stream);
+            assert_eq!(brep.pcurves.len(), 1);
+            let PcurveGeometry::Line { origin, direction } = brep.pcurves[0].geometry else {
+                panic!("expected axial pcurve");
+            };
+            for t in [3.0, 5.5, 8.0] {
+                let u = origin.u + t * direction.u;
+                let v = origin.v + t * direction.v;
+                assert!((1000.0 * u.cos()).abs() < 1e-9);
+                assert!((1000.0 * u.sin() - 1000.0).abs() < 1e-9);
+                assert!((v - (17.0 + rate * t)).abs() < 1e-9);
+                assert!((direction.v - rate).abs() < 1e-9);
+            }
+        }
+        for (x, direction) in [
+            (999.0, Vector3::new(0.0, 0.0, 1.0)),
+            (1000.0, Vector3::new(1.0, 0.0, 2.0)),
+        ] {
+            let mut brep = cylindrical_pcurve_fixture();
+            brep.curves[0].geometry = CurveGeometry::Line {
+                origin: Point3::new(x, 0.0, 17.0),
+                direction,
+            };
+            let mut annotations = AnnotationBuilder::new();
+            let stream = annotations.stream("test");
+            super::derive_cylindrical_pcurves(&mut brep, &mut annotations, stream);
+            assert!(brep.pcurves.is_empty());
+        }
     }
 }

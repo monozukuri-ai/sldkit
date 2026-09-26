@@ -145,6 +145,37 @@ def test_edge_derived_interval_is_optional_and_does_not_replace_source_range():
     )
 
 
+def test_derived_loop_role_is_optional_and_preserves_source_classification():
+    from dataclasses import replace
+
+    import sldkit
+
+    source = {
+        "id": "loop",
+        "face_id": "face",
+        "boundary_role": "unspecified",
+        "provenance": {"exactness": "byte_exact"},
+    }
+    old = sldkit.GeometryLoop.from_dict(source)
+    assert old.effective_boundary_role == "unspecified"
+    assert "derived_boundary_role" not in old.to_dict()
+    assert sldkit.GeometryLoop.from_dict(old.to_dict()) == old
+    derived = sldkit.GeometryDerivedLoopRole(
+        "inner", sldkit.GeometryLoopRoleMethod.PLANAR_ANALYTIC_WINDING, -3.14, 1e-7
+    )
+    loop = replace(old, derived_boundary_role=derived)
+    assert loop.boundary_role == "unspecified"
+    assert loop.effective_boundary_role == "inner"
+    assert sldkit.GeometryLoop.from_dict(loop.to_dict()) == loop
+    assert replace(loop, boundary_role="outer").effective_boundary_role == "outer"
+    for method in (
+        sldkit.GeometryIntervalMethod.CONIC_ENDPOINTS,
+        sldkit.GeometryIntervalMethod.CLOSED_CIRCLE_SEAM,
+    ):
+        value = sldkit.GeometryDerivedInterval((0.0, 6.28), method, 1e-7, 0.0)
+        assert sldkit.GeometryDerivedInterval.from_dict(value.to_dict()) == value
+
+
 def _carrier(identity: str, domain: str, definition: dict) -> dict:
     return {
         "id": identity,

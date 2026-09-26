@@ -36,8 +36,11 @@ use sldkit_core::{
 };
 
 mod byte_partition;
+mod cylindrical_loops;
 mod intervals;
+mod nurbs_intervals;
 mod parasolid;
+mod planar_loops;
 
 const DECODER_NAME: &str = "cadmpeg-codec-sldprt";
 const DECODER_VERSION: &str = "0.5.3+sldkit.4";
@@ -512,6 +515,13 @@ fn map_model(
             provenance: provenance(&face.id.0, annotations),
         })
         .collect();
+    let interval_sources = intervals::Sources::new(ir, annotations);
+    let mut derived_loop_roles = planar_loops::derive(ir, annotations, &interval_sources);
+    derived_loop_roles.extend(cylindrical_loops::derive(
+        ir,
+        annotations,
+        &interval_sources,
+    ));
     let loops = ir
         .model
         .loops
@@ -531,6 +541,7 @@ fn map_model(
                 })
                 .collect(),
             provenance: provenance(&item.id.0, annotations),
+            derived_boundary_role: derived_loop_roles.get(item.id.as_str()).cloned(),
         })
         .collect();
     let coedges = ir
@@ -551,7 +562,6 @@ fn map_model(
             provenance: provenance(&coedge.id.0, annotations),
         })
         .collect();
-    let interval_sources = intervals::Sources::new(ir);
     let edges = ir
         .model
         .edges
@@ -2221,6 +2231,72 @@ mod tests {
         );
         assert!(provenance.stream.is_none());
         assert!(provenance.offset.is_none());
+    }
+
+    #[test]
+    fn partial_nurbs_interval_survives_public_mapping_without_becoming_source_trim()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use cadmpeg_ir::{geometry::NurbsCurve, math::Point3};
+        let mut ir = cadmpeg_ir::examples::unit_cube();
+        let edge = ir.model.edges[0].clone();
+        let curve_id = edge.curve.as_ref().ok_or("missing curve")?;
+        ir.model
+            .curves
+            .iter_mut()
+            .find(|c| &c.id == curve_id)
+            .ok_or("missing carrier")?
+            .geometry = cadmpeg_ir::geometry::CurveGeometry::Nurbs(NurbsCurve {
+            degree: 2,
+            knots: vec![0., 0., 0., 1., 1., 1.],
+            control_points: vec![
+                Point3::new(0., 0., 0.),
+                Point3::new(1., 1., 0.),
+                Point3::new(2., 0., 0.),
+            ],
+            weights: None,
+            periodic: false,
+        });
+        // Exact quadratic Bezier values at t=3/4 and t=1/4, in reverse order.
+        for (vertex_id, point) in [
+            (&edge.start, Point3::new(1.5, 0.375, 0.)),
+            (&edge.end, Point3::new(0.5, 0.375, 0.)),
+        ] {
+            let vertex = ir
+                .model
+                .vertices
+                .iter()
+                .find(|v| &v.id == vertex_id)
+                .ok_or("missing vertex")?;
+            ir.model
+                .points
+                .iter_mut()
+                .find(|p| p.id == vertex.point)
+                .ok_or("missing point")?
+                .position = point;
+        }
+        ir.model.edges[0].param_range = None;
+        let model = super::map_model(&ir, &cadmpeg_ir::SourceFidelity::default())?;
+        let public = &model.edges[0];
+        assert!(public.parameter_range.is_none());
+        let derived = public
+            .derived_parameter_interval
+            .as_ref()
+            .ok_or("missing interval")?;
+        assert_eq!(
+            derived.method,
+            sldkit_core::GeometryIntervalMethod::NurbsMonotoneProjection
+        );
+        assert!((derived.parameter_range[0] - 0.75).abs() < 1e-12);
+        assert!((derived.parameter_range[1] - 0.25).abs() < 1e-12);
+        let json = serde_json::to_value(public)?;
+        assert_eq!(
+            json["derived_parameter_interval"]["method"],
+            "nurbs_monotone_projection"
+        );
+        ir.model.edges[0].param_range = Some([0.75, 0.25]);
+        let model = super::map_model(&ir, &cadmpeg_ir::SourceFidelity::default())?;
+        assert!(model.edges[0].derived_parameter_interval.is_none());
+        Ok(())
     }
 
     #[test]

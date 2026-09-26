@@ -1,0 +1,82 @@
+' Capture the active saved Part without rebuilding or saving it.
+' Run via Tools > Macro > Run. Output is beside the source; never overwritten.
+' All coordinates are meters; API senses and parameter ranges are unchanged.
+Option Explicit
+
+Function Numbers(values As Variant) As String
+    Dim i As Long, result As String
+    For i = LBound(values) To UBound(values)
+        result = result & "," & Trim(Str(CDbl(values(i))))
+    Next i
+    Numbers = result
+End Function
+
+Sub main()
+    On Error GoTo Failed
+    Dim app As Object, model As Object, fso As Object, output As Object
+    Dim bodies As Variant, faces As Variant, edges As Variant, loops As Variant
+    Dim coedges As Variant, mass As Variant, bounds As Variant, parameters As Variant
+    Dim evaluated As Variant, normal As Variant, surfaceParameters As Variant
+    Dim body As Object, face As Object, surface As Object, loopItem As Object
+    Dim coedge As Object, edge As Object
+    Dim bi As Long, fi As Long, li As Long, ci As Long
+    Dim source As String, destination As String, kind As String, u As Double
+    Set app = Application.SldWorks
+    Set model = app.ActiveDoc
+    If model Is Nothing Then Err.Raise 5, , "Open a saved Part first"
+    If model.GetType <> 1 Then Err.Raise 5, , "Active document must be a Part"
+    source = model.GetPathName
+    If Len(source) = 0 Then Err.Raise 5, , "Part must have a source path"
+    destination = Left(source, InStrRev(source, "\")) & "part-orientation.csv"
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set output = fso.CreateTextFile(destination, False, False)
+    output.WriteLine "CAPTURE,1," & app.RevisionNumber
+    output.WriteLine "SOURCE," & fso.GetFileName(source) & "," & fso.GetFile(source).Size
+    output.WriteLine "UNITS,meter"
+    bodies = model.GetBodies2(-1, False)
+    For bi = LBound(bodies) To UBound(bodies)
+        Set body = bodies(bi)
+        faces = body.GetFaces
+        edges = body.GetEdges
+        output.WriteLine "BODY," & bi & "," & body.GetType & "," & (UBound(faces) + 1) & "," & (UBound(edges) + 1)
+        mass = body.GetMassProperties(1#)
+        output.WriteLine "MASS," & bi & Numbers(mass)
+        For fi = LBound(faces) To UBound(faces)
+            Set face = faces(fi)
+            Set surface = face.GetSurface
+            kind = "unsupported"
+            surfaceParameters = Array()
+            If surface.IsPlane Then
+                kind = "plane"
+                surfaceParameters = surface.PlaneParams
+            ElseIf surface.IsCylinder Then
+                kind = "cylinder"
+                surfaceParameters = surface.CylinderParams
+            End If
+            output.WriteLine "FACE," & bi & "," & fi & "," & CInt(face.FaceInSurfaceSense) & "," & Trim(Str(face.GetArea)) & "," & kind & Numbers(surfaceParameters)
+            bounds = face.GetUVBounds
+            output.WriteLine "UV," & bi & "," & fi & Numbers(bounds)
+            loops = face.GetLoops
+            For li = LBound(loops) To UBound(loops)
+                Set loopItem = loops(li)
+                coedges = loopItem.GetCoEdges
+                output.WriteLine "LOOP," & bi & "," & fi & "," & li & "," & CInt(loopItem.IsOuter) & "," & (UBound(coedges) + 1)
+                For ci = LBound(coedges) To UBound(coedges)
+                    Set coedge = coedges(ci)
+                    Set edge = coedge.GetEdge
+                    parameters = edge.GetCurveParams2
+                    u = (parameters(6) + parameters(7)) / 2#
+                    evaluated = coedge.Evaluate(u)
+                    normal = surface.EvaluateAtPoint(evaluated(0), evaluated(1), evaluated(2))
+                    output.WriteLine "COEDGE," & bi & "," & fi & "," & li & "," & ci & "," & CInt(coedge.GetSense) & Numbers(parameters) & Numbers(evaluated) & Numbers(normal)
+                Next ci
+            Next li
+        Next fi
+    Next bi
+    output.WriteLine "COMPLETE"
+    output.Close
+    MsgBox "Captured part-orientation.csv; source was not saved."
+    Exit Sub
+Failed:
+    MsgBox "Capture failed: " & Err.Description
+End Sub

@@ -37,6 +37,49 @@ def test_release_artifact_rejects_private_design_material(tmp_path: Path):
         )
 
 
+def test_release_artifact_rejects_obsolete_vendored_shared_reader(tmp_path: Path):
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_artifacts.py"))
+
+    with pytest.raises(AssertionError, match="obsolete vendored shared reader"):
+        namespace["_check_names"](
+            tmp_path / "sldkit-0.2.0.tar.gz",
+            ["sldkit-0.2.0/vendor/parasolid-core/src/lib.rs"],
+        )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "docs/parser-progress-2026-09-26.ja.md",
+        "docs/part-boundary-followup.ja.md",
+        "docs/development/local-session-notes.md",
+        "scripts/create_partial_nurbs_fixture.swb",
+        "scripts/create_partial_nurbs_step.py",
+        "scripts/validate_m5_solidworks_fixture.py",
+    ],
+)
+def test_release_artifact_rejects_unlisted_docs_and_scripts(tmp_path: Path, relative):
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_artifacts.py"))
+
+    with pytest.raises(AssertionError, match="unlisted documentation or script"):
+        namespace["_check_names"](
+            tmp_path / "sldkit-0.2.0.tar.gz", [f"sldkit-0.2.0/{relative}"]
+        )
+
+
+def test_release_artifact_accepts_public_developer_docs_and_tools(tmp_path: Path):
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_artifacts.py"))
+    namespace["_check_names"](
+        tmp_path / "sldkit-0.2.0.tar.gz",
+        [
+            "sldkit-0.2.0/docs/geometry.md",
+            "sldkit-0.2.0/docs/development/releasing.md",
+            "sldkit-0.2.0/scripts/check_license.py",
+            "sldkit-0.2.0/scripts/test_assembly_capture.ps1",
+        ],
+    )
+
+
 def test_release_artifact_rejects_non_abi3_wheel(tmp_path: Path):
     namespace = runpy.run_path(str(ROOT / "scripts/verify_release_artifacts.py"))
     wheel = tmp_path / "sldkit-0.1.0-cp313-cp313-any.whl"

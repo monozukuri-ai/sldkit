@@ -12,6 +12,33 @@ contain this implementation, without a developer-local Cargo override.
 
 ## Parsing changes
 
+The Split Shaft Support update uses the published
+`parasolid-core` 0.3.2 crate. The shared crate admits the exact
+`SCH_3601228_36001_13006` hierarchy profile with the same declaration and link
+checks, and selects current face-owned FIN rings before normalization. Saved
+journal FINs outside that ownership graph are excluded; broken current loops
+still withhold FIN topology. Byte parsing remains in the shared crate.
+
+The adapter preserves native FACE/carrier senses instead of overwriting them
+with the legacy coedge-parity heuristic. Negative analytic curve orientation
+is represented by reversing the line direction or circle/ellipse axis; native
+edge endpoints and FIN senses stay in their source gauge. Negative surface
+orientation composes with FACE sense and existing signed-torus normalization.
+Compact curve edits undo the orientation fold before writing source values.
+Independent SolidWorks 2026 API comparison passes on all 52 faces and 256 FINs
+of the private Split Shaft Support sample. Captures, hashes and detailed
+validation records remain private development inputs.
+
+The follow-up boundary update fixes axial line pcurves on cylinders: their
+origin is the 3D carrier's parameter-zero point rather than the trimmed edge
+start, and their axial rate preserves the carrier direction's magnitude and
+sign. Off-cylinder and non-axial lines withhold the derivation. Changes to
+face/loop/coedge membership and next/previous links from synthesized periodic
+seams are marked derived at field level. sldkit's public adapter separately
+derives native conic intervals and bounded planar loop roles; no new binary
+reader or stored numeric trim classification is introduced. Reusable API and
+pcurve lift checks are described in `docs/development/part-validation.md`.
+
 The unreleased circle-ring update in `brep/native_fin.rs` accepts vertexless
 native ring edges within the already verified hierarchy/schema profile. Both
 FIN endpoints must be the native null sentinel; reciprocal opposite FINs must
@@ -55,8 +82,9 @@ describe B-Rep transfer; strict mode still rejects missing B-Rep. Native FIN
 failure notes now survive the metadata fallback. This does not relax FIN
 validation or change the Parasolid reader profile.
 
-`brep/native_hierarchy.rs` independently reads native BODY (12), REGION (19),
-and SHELL (13) links for **`SCH_3701229_37102_13006` only**. Both embedded BODY
+`brep/native_hierarchy.rs` delegates native BODY (12), REGION (19),
+and SHELL (13) links to the shared reader for **`SCH_3701229_37102_13006` and
+`SCH_3601228_36001_13006` only**. Both embedded BODY
 and REGION declarations must match the verified field definitions. Body kind
 1 is solid, kind 3 is sheet. Face membership comes from shell-linked native
 face IDs, with reciprocal owner/previous links, unique identities, and complete
@@ -191,7 +219,7 @@ cargo fmt --manifest-path vendor/cadmpeg-codec-sldprt/Cargo.toml -- --check
 
 ## Dependency update for sldkit 0.2.0
 
-The adapter now pins the registry `parasolid-core =0.2.0`. Its standalone
+The adapter now pins the registry `parasolid-core =0.3.2`. Its standalone
 lockfile and the parent/fuzz workspaces use the same version. This dependency
 update does not change the Apache-2.0 licensing of this vendor subtree or
 relicense the shared readers.

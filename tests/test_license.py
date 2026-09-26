@@ -100,7 +100,7 @@ def test_dependency_catalog_requires_complete_reviewed_locked_sources(tmp_path, 
         license_check.check_catalog(tmp_path)
 
 
-def test_sdist_dependency_gate_rejects_old_version_and_wrong_registry_checksum():
+def test_sdist_dependency_gate_rejects_old_version_patches_and_wrong_registry_source():
     check = runpy.run_path(str(ROOT / "scripts/verify_release_artifacts.py"))[
         "_check_parasolid_dependency"
     ]
@@ -110,14 +110,40 @@ def test_sdist_dependency_gate_rejects_old_version_and_wrong_registry_checksum()
     check(workspace, vendor, lock)
     with pytest.raises(AssertionError):
         check(
-            workspace.replace('parasolid-core = "=0.2.0"', 'parasolid-core = "=0.1.0"'),
+            workspace.replace(
+                f'parasolid-core = "={license_check.PARASOLID_VERSION}"',
+                'parasolid-core = "=0.2.0"',
+            ),
             vendor,
             lock,
         )
-    expected = next(
+    with pytest.raises(AssertionError):
+        check(
+            workspace
+            + '\n[patch.crates-io]\nparasolid-core = { path = "/tmp/core" }\n',
+            vendor,
+            lock,
+        )
+    with pytest.raises(AssertionError):
+        check(
+            workspace,
+            vendor,
+            lock.replace(
+                license_check.REGISTRY_SOURCE,
+                "registry+https://example.invalid/index",
+            ),
+        )
+    with pytest.raises(AssertionError):
+        check(
+            workspace,
+            vendor + '\n[patch.crates-io]\nparasolid-core = { path = "/tmp/core" }\n',
+            lock,
+        )
+    package = next(
         p
         for p in license_check.read_toml(ROOT / "Cargo.lock")["package"]
         if p["name"] == "parasolid-core"
     )
-    with pytest.raises(AssertionError):
-        check(workspace, vendor, lock.replace(expected["checksum"], "0" * 64))
+    for checksum in ("0" * 64, ""):
+        with pytest.raises(AssertionError):
+            check(workspace, vendor, lock.replace(package["checksum"], checksum))

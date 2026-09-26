@@ -1,7 +1,7 @@
 # Controlled Drawing validation
 
-M6a uses two independent evidence sources for every single-variable Drawing
-change:
+Controlled Drawing validation uses two independent evidence sources for every
+single-variable Drawing change:
 
 1. `sldkit` inventories exact XML record ranges and hashes whole candidate
    binary streams.
@@ -31,22 +31,6 @@ Useful first pairs are:
 Separate files are required. Re-saving one pathname in place loses the exact
 baseline bytes needed by the differential.
 
-### Next decoding sequence
-
-Until real captures are available, retain the existing XML/carrier inventory
-and its unresolved membership. The first semantic profile should use one sheet,
-one asymmetric Part, and one standard view. Capture separate variants for an
-X-only/Y-only position change, scale change, and view rotation. These distinguish
-coordinate direction, units, scale inheritance, and rotation before projection
-or derived views are added. Next add one projected view and verify its base-view
-relationship, then one note with distinctive text. Dimensions and tables follow
-only after view ownership and binary record boundaries can be verified.
-
-For every field, require repeatable single-operation differences, exact native
-byte ranges, and independent API values. A changed whole-stream hash or an XML
-record class alone is insufficient. The Assembly placement capture workflow is
-documented separately in [assembly-validation.md](assembly-validation.md).
-
 ## Capturing SolidWorks API facts
 
 On Windows with SolidWorks installed, close every existing SolidWorks session
@@ -55,10 +39,10 @@ and run Windows PowerShell 5.1:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\capture_drawing_ground_truth.ps1 `
-  -ProjectRoot C:\fixtures\m6a `
-  -DrawingPath M6a-00-Base.SLDDRW `
-  -FixtureId m6a-base-view `
-  -OutputPath C:\fixtures\m6a\M6a-00-Base.api.json
+  -ProjectRoot C:\fixtures\drawing `
+  -DrawingPath Base.SLDDRW `
+  -FixtureId drawing-base-view `
+  -OutputPath C:\fixtures\drawing\Base.api.json
 ```
 
 Repeat for the variant. The script refuses an already-running SolidWorks
@@ -80,7 +64,7 @@ The capture contains:
 
 `unavailable`, `none`, `no_reference`, `missing`, and `ambiguous` remain distinct.
 The JSON contract is
-[`drawing-ground-truth.schema.json`](schemas/drawing-ground-truth.schema.json).
+[`drawing-ground-truth.schema.json`](../schemas/drawing-ground-truth.schema.json).
 
 Persistent-reference byte representations may change across rebuilds or
 SolidWorks releases. Keep their exact bytes and hashes as API evidence, but do
@@ -94,12 +78,12 @@ development environment installed, run:
 
 ```bash
 uv run python scripts/compare_drawing_structures.py \
-  fixtures/M6a-00-Base.SLDDRW \
-  fixtures/M6a-01-Projected.SLDDRW \
-  --baseline-api fixtures/M6a-00-Base.api.json \
-  --variant-api fixtures/M6a-01-Projected.api.json \
+  fixtures/Base.SLDDRW \
+  fixtures/Projected.SLDDRW \
+  --baseline-api fixtures/Base.api.json \
+  --variant-api fixtures/Projected.api.json \
   --profile service \
-  --output fixtures/M6a-00--01.diff.json
+  --output fixtures/base-to-projected.diff.json
 ```
 
 The comparator first requires each API capture SHA-256 to match its native

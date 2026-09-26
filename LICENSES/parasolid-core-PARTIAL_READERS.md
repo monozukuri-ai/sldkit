@@ -21,9 +21,15 @@ configuration selection and unit conversion around these shared readers.
   referenced records, and apply recognized point updates. It does not implement
   arbitrary deletes, replacement topology, or undocumented delta opcodes.
 - Native BODY/REGION/SHELL ownership and FIN normalization retain the exact
-  `SCH_3701229_37102_13006` admission and link consistency checks. Incomplete
+  `SCH_3701229_37102_13006` and `SCH_3601228_36001_13006` admission and link
+  consistency checks. After hierarchy recovery, `native_fin::retain_face_fins`
+  selects the current face loops and their opposite boundary dummies before
+  normalization, excluding unreachable saved-journal FINs. Missing records,
+  shared loops, cyclic ownership, or broken opposite links fail without changing
+  the table. This selection does not replay journal topology updates. Incomplete
   opposite/radial/vertex evidence withholds normalized FIN topology.
 - Analytic and NURBS readers return source-unit parameters and Euclidean poles.
+  Analytic records also retain the unmodified `+`/`-` orientation byte.
   Length conversion belongs to the caller; knots, angles, directions, weights,
   and surface UV coordinates are not length-scaled. The neutral partial types
   describe standalone carriers, not the complete native B-Rep graph.

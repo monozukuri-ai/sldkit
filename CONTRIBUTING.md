@@ -44,5 +44,5 @@ material proposed for incorporation that requires a license grant.
 Preserve earlier MIT and third-party notices. After changing legal files, run
 `python scripts/sync_license_notices.py`, then rebuild the viewer with
 `npm run build --prefix viewer`. Check `python scripts/check_license.py` and
-the [distribution gates](docs/releasing.md). Generated Rust and viewer notices
+the [distribution gates](docs/development/releasing.md). Generated Rust and viewer notices
 must match the canonical files; do not edit those copies by hand.

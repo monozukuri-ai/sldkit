@@ -2,7 +2,7 @@
 
 The following Rust crates are compiled into the modern Part geometry decoder:
 
-- `parasolid-core` 0.2.0 — MIT AND Apache-2.0 (headers and shared partial readers)
+- `parasolid-core` 0.3.2 — MIT AND Apache-2.0 (published registry crate)
 - `cadmpeg-codec-sldprt` 0.5.3+sldkit.4 — Apache-2.0 (patched source)
 - `cadmpeg-container` 0.5.3 — Apache-2.0
 - `cadmpeg-core` 0.5.3 — Apache-2.0
@@ -23,6 +23,9 @@ generated inventory and full notices are in `rust-dependencies.json` and
 `parasolid-core` is published from
 <https://github.com/monozukuri-ai/parasolid-kit>. Its copyright and MIT license
 are included in [`parasolid-core-MIT.txt`](parasolid-core-MIT.txt).
+The registry archive checksum is pinned in all three Cargo lockfiles and
+included in the generated dependency catalog. Shared-reader changes are
+maintained in parasolid-kit and consumed through the published crate.
 
 The adopted partial-reader files in parasolid-core remain Apache-2.0 licensed;
 its `PARTIAL_READERS.md` records their origin and modifications. The Apache text

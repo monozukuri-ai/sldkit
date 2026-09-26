@@ -77,8 +77,9 @@ Mate reconstruction is a later, separate capability.
 
 `pwsh -NoProfile -File scripts/test_assembly_capture.ps1` parses the script and
 tests numeric validation and SDK-probe capture with mocks on Linux. This is not
-Windows COM execution. No real Assembly API capture was available for the
-2026-09-26 implementation; native placement semantics remain unverified.
+Windows COM execution. Native placement semantics remain unverified until
+saved/reopened native files and independent API captures pass the acceptance
+criteria above.
 
 The API basis is
 [`IComponent2.Transform2`](https://help.solidworks.com/2019/english/api/sldworksapi/SOLIDWORKS.Interop.sldworks~SOLIDWORKS.Interop.sldworks.IComponent2~Transform2.html),

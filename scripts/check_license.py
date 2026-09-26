@@ -13,7 +13,8 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_LICENSE = "PolyForm-Noncommercial-1.0.0 AND MIT"
 DISTRIBUTION_LICENSE = PROJECT_LICENSE + " AND Apache-2.0 AND BSD-3-Clause"
-PARASOLID_VERSION = "0.2.0"
+PARASOLID_VERSION = "0.3.2"
+REGISTRY_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 LOCKFILES = (
     "Cargo.lock",
     "vendor/cadmpeg-codec-sldprt/Cargo.lock",
@@ -212,19 +213,25 @@ def check(root: Path = ROOT) -> str:
     vendor = read_toml(root / "vendor/cadmpeg-codec-sldprt/Cargo.toml")
     if vendor["package"]["license"] != "Apache-2.0":
         raise ValueError("Vendor must retain Apache-2.0")
-    if (
-        workspace["dependencies"]["parasolid-core"] != "=" + PARASOLID_VERSION
-        or vendor["dependencies"]["parasolid-core"]["version"]
-        != "=" + PARASOLID_VERSION
-    ):
+    if workspace["dependencies"]["parasolid-core"] != "=" + PARASOLID_VERSION or vendor[
+        "dependencies"
+    ]["parasolid-core"] != {"version": "=" + PARASOLID_VERSION}:
         raise ValueError("Unexpected parasolid-core pin")
     for lock in LOCKFILES:
-        versions = [
-            p["version"]
+        manifest = read_toml(root / Path(lock).with_name("Cargo.toml"))
+        if "parasolid-core" in manifest.get("patch", {}).get("crates-io", {}):
+            raise ValueError(f"Unexpected parasolid-core patch: {lock}")
+        packages = [
+            p
             for p in read_toml(root / lock)["package"]
             if p["name"] == "parasolid-core"
         ]
-        if versions != [PARASOLID_VERSION]:
+        if (
+            len(packages) != 1
+            or packages[0]["version"] != PARASOLID_VERSION
+            or packages[0].get("source") != REGISTRY_SOURCE
+            or len(packages[0].get("checksum", "")) != 64
+        ):
             raise ValueError(f"Stale parasolid-core lock: {lock}")
     viewer = json.loads((root / "viewer/package.json").read_bytes())
     npm_lock = json.loads((root / "viewer/package-lock.json").read_bytes())

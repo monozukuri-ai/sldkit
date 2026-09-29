@@ -106,6 +106,43 @@ def test_partial_intervals_and_affine_parameter_gauges(fixture):
     assert not result["source_trim_verified"]
 
 
+@pytest.mark.parametrize("api_type", [3005, 3006])
+def test_spline_and_line_sheet_with_full_sample_coverage(fixture, api_type):
+    tool, model, path, source = fixture
+    rows = list(csv.reader(path.open()))
+    for row in rows:
+        if row[0] == "EDGE":
+            row[3] = str(3001 if int(row[2]) % 2 == 0 else api_type)
+    with path.open("w", newline="") as stream:
+        csv.writer(stream).writerows(rows)
+    for i in (0, 2):
+        a = model["points"][i]["position"]
+        b = model["points"][i + 1]["position"]
+        model["carriers"][i]["definition"] = {
+            "kind": "line",
+            "origin": dict(zip("xyz", a, strict=True)),
+            "direction": dict(
+                zip("xyz", [y - x for x, y in zip(a, b, strict=True)], strict=True)
+            ),
+        }
+        model["edges"][i]["derived_parameter_interval"] = {
+            "parameter_range": [0, 1],
+            "method": "line_projection",
+        }
+    capture = tool["read_capture"](path, source)
+    result = tool["validate"](model, capture)
+    assert result["passed"]
+    assert result["samples"] == 68
+    assert result["partial_support_intervals"] == 2
+    # Lines remain part of the positional/tangent oracle, but are never
+    # counted as evidence of partial NURBS support intervals.
+    capture[1][(0, 0)][8][2] += 1e-4
+    assert not tool["validate"](model, capture)["passed"]
+    capture[0][(0, 0)][0] = api_type
+    with pytest.raises(ValueError, match="non-bijective"):
+        tool["validate"](model, capture)
+
+
 @pytest.mark.parametrize("damage", ["interval", "sample", "tangent"])
 def test_oracle_rejects_wrong_intervals_positions_and_tangents(fixture, damage):
     tool, model, path, source = fixture

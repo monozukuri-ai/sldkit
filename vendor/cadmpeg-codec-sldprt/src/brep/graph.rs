@@ -751,6 +751,37 @@ fn edge_end_vuse(canonical: u16, ring_end: u16, coedges: &HashMap<u16, topology:
     twin_record.refs.get(4).copied().unwrap_or(ring_end)
 }
 
+/// Resolve directed endpoints after native FIN normalization. On a sheet,
+/// the authoritative forward FIN may be a dummy outside every face loop.
+/// Its reciprocal visible use must corroborate both endpoints in ring order.
+fn canonical_edge_vertices(
+    canonical: u16,
+    incidences: &[(u16, u16, u16)],
+    coedges: &HashMap<u16, topology::Record>,
+    native_hierarchy: bool,
+) -> Option<(u16, u16)> {
+    if let Some((_, start, end)) = incidences.iter().find(|(id, _, _)| *id == canonical) {
+        return Some((*start, edge_end_vuse(canonical, *end, coedges)));
+    }
+    if !native_hierarchy {
+        return None;
+    }
+    let fin = coedges.get(&canonical)?;
+    if fin.refs.get(1..4) != Some(&[1, 1, 1][..]) {
+        return None;
+    }
+    let partner = *fin.refs.get(5)?;
+    let (_, start, end) = incidences.iter().find(|(id, _, _)| *id == partner)?;
+    let opposite = coedges.get(&partner)?;
+    if opposite.refs.get(5) != Some(&canonical)
+        || fin.refs.get(4) != Some(end)
+        || opposite.refs.get(4) != Some(start)
+    {
+        return None;
+    }
+    Some((*end, *start))
+}
+
 fn surface_sense(marker: u8, orientation_reversed: bool) -> Sense {
     match (sense_of(marker), orientation_reversed) {
         (Sense::Forward, true) => Sense::Reversed,
@@ -1110,20 +1141,18 @@ fn decode_graph(
         let Some(canonical) = canonical else {
             continue;
         };
-        let Some((_, start_vuse, ring_end_vuse)) = incidences
-            .iter()
-            .find(|(coedge_attr, _, _)| *coedge_attr == canonical)
+        let Some((start_vuse, end_vuse)) =
+            canonical_edge_vertices(canonical, &incidences, &t.coedges, native_hierarchy)
         else {
             continue;
         };
-        let end_vuse = edge_end_vuse(canonical, *ring_end_vuse, &t.coedges);
         let curve_attr = t
             .edge_uses
             .get(&edge_attr)
             .and_then(|edge_use| edge_use.refs.get(3).copied())
             .unwrap_or(0);
-        edge_ends.insert(edge_attr, (*start_vuse, end_vuse, curve_attr));
-        for vuse in [*start_vuse, end_vuse] {
+        edge_ends.insert(edge_attr, (start_vuse, end_vuse, curve_attr));
+        for vuse in [start_vuse, end_vuse] {
             if vuse == 0 {
                 continue;
             }
@@ -5079,6 +5108,61 @@ mod tests {
             super::canonical_coedge_attr(7, Some(&prefixed_edge), &coedges),
             None
         );
+    }
+
+    #[test]
+    fn dummy_canonical_endpoints_require_native_gate_and_reciprocal_ring_evidence() {
+        let record = |attr, refs, marker| super::Record {
+            read_ranges: Vec::new(),
+            attr,
+            refs,
+            marker,
+            xyz_m: None,
+            xyz_offset: None,
+            owner: None,
+            offset: 0,
+        };
+        let coedges = std::collections::HashMap::from([
+            (
+                10,
+                record(10, vec![1, 20, 1, 1, 101, 11, 7, 1, 1], Some(b'-')),
+            ),
+            (
+                11,
+                record(11, vec![1, 1, 1, 1, 102, 10, 7, 1, 1], Some(b'+')),
+            ),
+        ]);
+        let incidences = [(10, 101, 102)];
+        assert_eq!(
+            super::canonical_edge_vertices(11, &incidences, &coedges, true),
+            Some((102, 101))
+        );
+        assert_eq!(
+            super::canonical_edge_vertices(11, &incidences, &coedges, false),
+            None
+        );
+        assert_eq!(
+            super::canonical_edge_vertices(11, &[], &coedges, true),
+            None
+        );
+        assert_eq!(
+            super::canonical_edge_vertices(11, &[(10, 101, 103)], &coedges, true),
+            None
+        );
+        for (id, field, value) in [
+            (11, 1, 20),
+            (11, 2, 10),
+            (11, 4, 103),
+            (10, 4, 103),
+            (10, 5, 12),
+        ] {
+            let mut damaged = coedges.clone();
+            damaged.get_mut(&id).unwrap().refs[field] = value;
+            assert_eq!(
+                super::canonical_edge_vertices(11, &incidences, &damaged, true),
+                None
+            );
+        }
     }
 
     #[test]

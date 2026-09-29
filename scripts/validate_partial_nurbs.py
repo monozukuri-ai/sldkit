@@ -80,9 +80,17 @@ def read_capture(path, source):
         or set(supports) != set(edges)
     ):
         raise ValueError("incomplete API coverage")
+    # BCURVE_TYPE is 3005; 3006 is SPCURVE_TYPE, used by the earlier
+    # surface-boundary fixture. Neither identity alone certifies native NURBS.
+    if not any(edge[0] in (3005, 3006) for edge in edges.values()):
+        raise ValueError("expected at least one spline API boundary")
     for identity, edge in edges.items():
-        if edge[0] != 3006 or edge[1] not in (0, -1) or edge[2] >= edge[3]:
-            raise ValueError("expected directed B-spline API interval")
+        if (
+            edge[0] not in (3001, 3005, 3006)
+            or edge[1] not in (0, -1)
+            or edge[2] >= edge[3]
+        ):
+            raise ValueError("expected directed line or spline API interval")
         if supports[identity][0] != -1 or supports[identity][3:] != [0, 0]:
             raise ValueError("expected nonperiodic open API support")
         if set(samples[identity]) != set(range(17)):
@@ -96,6 +104,34 @@ def read_capture(path, source):
     return edges, samples, supports
 
 
+def read_curve(definition):
+    if definition["kind"] == "nurbs":
+        curve = Nurbs.read("curve", definition)
+        axis = curve.axes[0]
+
+        def evaluate(t):
+            point, (tangent,) = curve.evaluate((t,))
+            return point, tangent
+
+        return evaluate, [axis.knots[axis.degree], axis.knots[axis.count]], (3005, 3006)
+    if definition["kind"] == "line":
+        origin = [definition["origin"][axis] for axis in "xyz"]
+        direction = [definition["direction"][axis] for axis in "xyz"]
+        if (
+            not all(math.isfinite(v) for v in origin + direction)
+            or math.hypot(*direction) == 0
+        ):
+            raise ValueError("invalid native line")
+
+        def evaluate(t):
+            return [
+                p + t * d for p, d in zip(origin, direction, strict=True)
+            ], direction
+
+        return evaluate, None, (3001,)
+    raise ValueError("expected NURBS or line boundary carrier")
+
+
 def validate(model, capture):
     edges, samples, supports = capture
     if [len(model[k]) for k in ("bodies", "faces", "edges")] != [1, 1, 4]:
@@ -106,9 +142,7 @@ def validate(model, capture):
     used, checks = set(), []
     for edge in model["edges"]:
         definition = carriers[edge["curve_id"]]["definition"]
-        if definition["kind"] != "nurbs":
-            raise ValueError("expected NURBS boundary carrier")
-        curve = Nurbs.read("curve", definition)
+        evaluate, domain, api_types = read_curve(definition)
         derived = edge.get("derived_parameter_interval")
         bounds = edge.get("parameter_range") or (derived or {}).get("parameter_range")
         if (
@@ -118,13 +152,15 @@ def validate(model, capture):
             or bounds[0] == bounds[1]
         ):
             raise ValueError("missing or invalid effective interval")
-        ends = [curve.evaluate((t,))[0] for t in bounds]
+        ends = [evaluate(t)[0] for t in bounds]
         endpoint_error = max(
             distance(p, vertices[edge[key]])
             for p, key in zip(ends, ("start_vertex_id", "end_vertex_id"), strict=True)
         )
         matches = []
         for identity in edges:
+            if edges[identity][0] not in api_types:
+                continue
             api = [[v * 1000 for v in samples[identity][i][1:4]] for i in (0, 16)]
             for reverse in (False, True):
                 if (
@@ -139,7 +175,7 @@ def validate(model, capture):
         errors, dots = [], []
         lo, hi = bounds[::-1] if reverse else bounds
         for i, sample in samples[identity].items():
-            point, (tangent,) = curve.evaluate((lo + (hi - lo) * i / 16,))
+            point, tangent = evaluate(lo + (hi - lo) * i / 16)
             reference = [v * 1000 for v in sample[1:4]]
             reference_tangent = sample[4:7]
             rate = (hi - lo) / (edges[identity][3] - edges[identity][2])
@@ -152,14 +188,16 @@ def validate(model, capture):
                 sum(a * b for a, b in zip(tangent, reference_tangent, strict=True))
                 / denominator
             )
-        axis = curve.axes[0]
-        domain = [axis.knots[axis.degree], axis.knots[axis.count]]
         partial = (
-            max(abs(a - b) for a, b in zip(sorted(bounds), domain, strict=True)) > 1e-9
+            domain is not None
+            and max(abs(a - b) for a, b in zip(sorted(bounds), domain, strict=True))
+            > 1e-9
         )
         checks.append(
             {
                 "edge_id": edge["id"],
+                "native_curve_kind": definition["kind"],
+                "api_curve_type": int(edges[identity][0]),
                 "api_edge": list(identity),
                 "native_interval": bounds,
                 "native_support_domain": domain,

@@ -48,7 +48,12 @@ unverified capabilities even when these bounded checks pass.
 
 [`validate_partial_nurbs.py`](../../scripts/validate_partial_nurbs.py) accepts a
 version-2 sample CSV from a saved/reopened Part with one sheet body, one face,
-and four open, nonperiodic B-spline edges. It requires `CAPTURE`, `SOURCE`,
+and four open, nonperiodic boundary edges. Native carriers must be NURBS or
+lines, with at least one spline in the API capture. API curve identities 3005
+(B-curve) and 3006 (surface-parameter curve) are compared to decoded NURBS;
+3001 is compared to a decoded line. Identity alone does not establish a match.
+These values follow SolidWorks' [curve type enumeration](https://help.solidworks.com/2026/english/api/swconst/SolidWorks.Interop.swconst~SolidWorks.Interop.swconst.swCurveTypes_e.html).
+It requires `CAPTURE`, `SOURCE`,
 `UNITS`, `BODY`, `FACE`, `EDGE`, `SUPPORT`, `SAMPLE`, and final `COMPLETE` records.
 Each edge must have 17 evenly spaced parameter samples with positions and first
 derivatives in source units (meters), plus its API interval and support domain.
@@ -56,7 +61,8 @@ The version-1 orientation capture above does not contain these sample records.
 
 The command takes `source`, `capture`, `--source-sha256`, `--capture-sha256`,
 and `--output`. Add `--require-partial` to require a proper subset of at least
-one native support domain. Endpoint matching must be unique; sampled positions
+one native NURBS support domain; line intervals do not count. Endpoint matching
+must be unique; sampled positions
 and directed tangents must agree after the recorded affine parameter mapping.
 Reparameterizing every edge to its full support cannot qualify partial-interval
 derivation. Missing decoded geometry, incomplete captures, and unsupported

@@ -1,4 +1,4 @@
-//! Simple single-loop cylinder charts, including an explicitly cut seam pair.
+//! Simple cylinder charts with disjoint holes and an optional cut seam pair.
 //! The chart is unwrapped continuously; raw atan2 jumps are not trim boundaries.
 use super::intervals::{self, Sources};
 use cadmpeg_ir::{
@@ -169,7 +169,105 @@ fn chart_area(ring: &mut [Segment], radius: f64, sign: f64, cut_seam: bool) -> O
         .sum::<f64>()
         * radius
         * sign;
-    (area.is_finite() && area > TOL * TOL).then_some(area)
+    (area.is_finite() && area.abs() > TOL * TOL).then_some(area)
+}
+
+struct Chart {
+    ring: Vec<Segment>,
+    cut_seam: bool,
+}
+
+fn bounds(ring: &[Segment]) -> [f64; 2] {
+    ring.iter()
+        .fold([f64::INFINITY, f64::NEG_INFINITY], |b, s| {
+            [b[0].min(s.bounds()[0]), b[1].max(s.bounds()[1])]
+        })
+}
+
+/// Vertical ray parity on analytic graphs. Near a vertex or the boundary,
+/// withhold the answer so the caller can choose another boundary witness.
+fn contains(ring: &[Segment], point: P, utol: f64) -> Option<bool> {
+    let mut inside = false;
+    for s in ring {
+        let [lo, hi] = s.bounds();
+        if s.has(point, utol) || (point[0] - lo).abs() <= utol || (point[0] - hi).abs() <= utol {
+            return None;
+        }
+        if s.graph.is_some() && point[0] > lo && point[0] < hi && s.value(point[0]) > point[1] {
+            inside = !inside;
+        }
+    }
+    Some(inside)
+}
+
+/// Intersections have already been excluded, so any unambiguous point on the
+/// candidate ring determines containment of that entire simple ring.
+fn contains_ring(container: &[Segment], candidate: &[Segment], utol: f64) -> Option<bool> {
+    candidate.iter().find_map(|s| {
+        let u = s.start[0].midpoint(s.end[0]);
+        let v = if s.graph.is_some() {
+            s.value(u)
+        } else {
+            s.start[1].midpoint(s.end[1])
+        };
+        contains(container, [u, v], utol).or_else(|| contains(container, s.start, utol))
+    })
+}
+
+fn classify(charts: &mut [Chart], radius: f64, sign: f64) -> Option<Vec<f64>> {
+    if charts.is_empty()
+        || charts.len() > 128
+        || charts.iter().map(|c| c.ring.len()).sum::<usize>() > 512
+    {
+        return None;
+    }
+    let areas = charts
+        .iter_mut()
+        .map(|c| chart_area(&mut c.ring, radius, sign, c.cut_seam))
+        .collect::<Option<Vec<_>>>()?;
+    let mut outer = areas.iter().enumerate().filter(|(_, area)| **area > 0.0);
+    let (outer_index, _) = outer.next()?;
+    if outer.next().is_some() {
+        return None;
+    }
+    let utol = TOL / radius;
+    let [low, high] = bounds(&charts[outer_index].ring);
+    for (i, chart) in charts.iter_mut().enumerate() {
+        if i == outer_index {
+            continue;
+        }
+        if chart.cut_seam {
+            return None;
+        }
+        let [lo, hi] = bounds(&chart.ring);
+        // A proper hole must fit strictly inside one copy of the outer chart.
+        // Since the outer spans at most one period, that copy is unique.
+        let shift = ((low.midpoint(high) - lo.midpoint(hi)) / TAU).round() * TAU;
+        if lo + shift <= low + utol || hi + shift >= high - utol {
+            return None;
+        }
+        for s in &mut chart.ring {
+            s.start[0] += shift;
+            s.end[0] += shift;
+        }
+    }
+    for (i, a) in charts.iter().enumerate() {
+        for (j, b) in charts.iter().enumerate().skip(i + 1) {
+            for left in &a.ring {
+                for right in &b.ring {
+                    if !crossings(left, right, utol)?.is_empty() {
+                        return None;
+                    }
+                }
+            }
+            if contains_ring(&a.ring, &b.ring, utol)? != (i == outer_index)
+                || contains_ring(&b.ring, &a.ring, utol)? != (j == outer_index)
+            {
+                return None;
+            }
+        }
+    }
+    (areas.iter().sum::<f64>() > TOL * TOL).then_some(areas)
 }
 
 fn segment(pc: &PcurveGeometry, range: [f64; 2], radius: f64) -> Option<Segment> {
@@ -286,138 +384,98 @@ pub(super) fn derive(
             else {
                 return None;
             };
-            if !sources.native_entity(face.id.as_str()) || face.loops.len() != 1 {
-                return None;
-            }
-            let lp = *loops.get(&face.loops[0])?;
-            if lp.face != face.id
-                || !lp.vertex_uses.is_empty()
-                || lp.coedges.len() > 128
-                || lp.boundary_role != cadmpeg_ir::topology::LoopBoundaryRole::Unspecified
+            if !sources.native_entity(face.id.as_str())
+                || face.loops.is_empty()
+                || face.loops.len() > 128
+                || face.loops.iter().collect::<BTreeSet<_>>().len() != face.loops.len()
             {
                 return None;
             }
-            let mut seen = BTreeSet::new();
-            let mut seam = Vec::new();
-            let mut ring = Vec::new();
-            for (i, id) in lp.coedges.iter().enumerate() {
-                let c = *coedges.get(id)?;
-                if !seen.insert(id)
-                    || c.owner_loop != lp.id
-                    || c.use_curve.is_some()
-                    || c.use_curve_parameter_range.is_some()
-                    || c.next != lp.coedges[(i + 1) % lp.coedges.len()]
-                    || c.previous != lp.coedges[(i + lp.coedges.len() - 1) % lp.coedges.len()]
+            let mut charts = Vec::new();
+            let mut total_coedges = 0;
+            for loop_id in &face.loops {
+                let lp = *loops.get(loop_id)?;
+                total_coedges += lp.coedges.len();
+                if lp.face != face.id
+                    || !lp.vertex_uses.is_empty()
+                    || lp.coedges.len() < 4
+                    || lp.coedges.len() > 128
+                    || total_coedges > 512
+                    || lp.boundary_role != cadmpeg_ir::topology::LoopBoundaryRole::Unspecified
                 {
                     return None;
                 }
-                let edge = *edges.get(&c.edge)?;
-                let mut range = edge.param_range.or_else(|| {
-                    intervals::derive_for_edge(edge, sources).map(|r| r.parameter_range)
-                })?;
-                if c.sense == Sense::Reversed {
-                    range.swap(0, 1);
-                }
-                let [use_] = c.pcurves.as_slice() else {
-                    return None;
-                };
-                let pc = *pcurves.get(&use_.pcurve)?;
-                if tag(pc.id.as_str()) != Some("derived_cylindrical_pcurve") {
-                    return None;
-                }
-                let segment = segment(&pc.geometry, range, radius)?;
-                if tag(edge.id.as_str()) == Some("derived_periodic_seam") {
-                    if segment.graph.is_some() {
+                let mut seen = BTreeSet::new();
+                let mut seam = Vec::new();
+                let mut ring = Vec::new();
+                for (i, id) in lp.coedges.iter().enumerate() {
+                    let c = *coedges.get(id)?;
+                    if !seen.insert(id)
+                        || c.owner_loop != lp.id
+                        || c.use_curve.is_some()
+                        || c.use_curve_parameter_range.is_some()
+                        || c.next != lp.coedges[(i + 1) % lp.coedges.len()]
+                        || c.previous != lp.coedges[(i + lp.coedges.len() - 1) % lp.coedges.len()]
+                    {
                         return None;
                     }
-                    seam.push((edge.id.clone(), c.sense));
+                    let edge = *edges.get(&c.edge)?;
+                    let mut range = edge.param_range.or_else(|| {
+                        intervals::derive_for_edge(edge, sources).map(|r| r.parameter_range)
+                    })?;
+                    if c.sense == Sense::Reversed {
+                        range.swap(0, 1);
+                    }
+                    let [use_] = c.pcurves.as_slice() else {
+                        return None;
+                    };
+                    let pc = *pcurves.get(&use_.pcurve)?;
+                    if tag(pc.id.as_str()) != Some("derived_cylindrical_pcurve")
+                        || use_.parameter_range.is_some()
+                        || pc.parameter_range.is_some()
+                        || pc.wrapper_reversed.is_some()
+                    {
+                        return None;
+                    }
+                    let segment = segment(&pc.geometry, range, radius)?;
+                    if tag(edge.id.as_str()) == Some("derived_periodic_seam") {
+                        if segment.graph.is_some() {
+                            return None;
+                        }
+                        seam.push((edge.id.clone(), c.sense));
+                    }
+                    ring.push(segment);
                 }
-                ring.push(segment);
+                let cut_seam = match seam.as_slice() {
+                    [] => false,
+                    [(a, sa), (b, sb)] if a == b && sa != sb => true,
+                    _ => return None,
+                };
+                charts.push(Chart { ring, cut_seam });
             }
-            let cut_seam = match seam.as_slice() {
-                [] => false,
-                [(a, sa), (b, sb)] if a == b && sa != sb => true,
-                _ => return None,
-            };
             let sign = if face.sense == Sense::Forward {
                 1.
             } else {
                 -1.
             };
-            Some((
-                lp.id.0.clone(),
-                chart_area(&mut ring, radius, sign, cut_seam)?,
-            ))
+            classify(&mut charts, radius, sign)
         })();
-        if let Some((id, area)) = evidence {
-            result.insert(
-                id,
-                GeometryDerivedLoopRole {
-                    role: "outer".into(),
-                    method: GeometryLoopRoleMethod::CylindricalAnalyticChart,
-                    signed_area_mm2: area,
-                    tolerance_mm: TOL,
-                },
-            );
+        if let Some(areas) = evidence {
+            for (id, area) in face.loops.iter().zip(areas) {
+                result.insert(
+                    id.0.clone(),
+                    GeometryDerivedLoopRole {
+                        role: if area > 0.0 { "outer" } else { "inner" }.into(),
+                        method: GeometryLoopRoleMethod::CylindricalAnalyticChart,
+                        signed_area_mm2: area,
+                        tolerance_mm: TOL,
+                    },
+                );
+            }
         }
     }
     result
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    fn rectangle(width: f64) -> Vec<Segment> {
-        vec![
-            Segment {
-                start: [0., 0.],
-                end: [width, 0.],
-                graph: Some([0., 0., 0.]),
-            },
-            Segment {
-                start: [width, 0.],
-                end: [width, 3.],
-                graph: None,
-            },
-            Segment {
-                start: [width, 3.],
-                end: [0., 3.],
-                graph: Some([3., 0., 0.]),
-            },
-            Segment {
-                start: [0., 3.],
-                end: [0., 0.],
-                graph: None,
-            },
-        ]
-    }
-    #[test]
-    fn chart_crosses_branch_and_requires_explicit_full_period_seams() -> Result<(), &'static str> {
-        let mut ring = rectangle(2.);
-        for s in &mut ring[1..] {
-            s.start[0] -= TAU;
-            s.end[0] -= TAU;
-        }
-        assert!((chart_area(&mut ring, 5., 1., false).ok_or("closed chart")? - 30.).abs() < 1e-10);
-        assert!(chart_area(&mut rectangle(TAU), 5., 1., false).is_none());
-        assert!(chart_area(&mut rectangle(TAU), 5., 1., true).is_some());
-        assert!(chart_area(&mut rectangle(TAU + 0.1), 5., 1., true).is_none());
-        assert!(chart_area(&mut rectangle(2.), 5., -1., false).is_none());
-        Ok(())
-    }
-    #[test]
-    fn harmonic_crossings_and_overlapping_boundaries_are_rejected() {
-        let mut ring = rectangle(4.);
-        ring[0].graph = Some([1., 2., 0.]);
-        ring[0].start[1] = 3.;
-        ring[0].end[1] = 1. + 2. * 4_f64.cos();
-        ring[1].start = ring[0].end;
-        ring[3].end = ring[0].start;
-        assert!(chart_area(&mut ring, 1., 1., false).is_none());
-        let a = rectangle(2.).remove(0);
-        assert!(crossings(&a, &a, 1e-7).is_none());
-        let mut open = rectangle(2.);
-        open[1].start[1] = 0.1;
-        assert!(chart_area(&mut open, 1., 1., false).is_none());
-    }
-}
+mod tests;

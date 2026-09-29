@@ -184,6 +184,49 @@ fn decoded_graph_keeps_native_sheet_ids_and_explicit_source_annotations() {
 }
 
 #[test]
+fn native_sheet_keeps_edges_whose_forward_fin_is_a_boundary_dummy() {
+    use crate::{brep, parasolid, test_support};
+    use cadmpeg_ir::topology::Sense;
+    let mut data = native_sheet_body();
+    let tables = brep::topology::scan(&data);
+    // Reverse one edge's canonical direction: its visible FIN is now negative,
+    // while its positive dummy is explicitly referenced by the native EDGE.
+    data[tables.coedges[&30].offset + 22] = b'-';
+    data[tables.coedges[&70].offset + 22] = b'+';
+    u16_at(&mut data, tables.edge_uses[&40].offset + 18, 70);
+    let stream = test_support::parasolid_with_body("partition body", SCHEMA, &data);
+    let header = parasolid::stream_header(&stream).unwrap();
+    let decoded = brep::decode_bodies(&[(&stream, &header)], "test-partition");
+    assert_eq!(decoded.stats.unresolved_native_fins, 0);
+    assert_eq!(
+        (
+            decoded.bodies.len(),
+            decoded.faces.len(),
+            decoded.edges.len()
+        ),
+        (1, 1, 3)
+    );
+    let edge = decoded
+        .edges
+        .iter()
+        .find(|e| e.id.0 == "sldprt:brep:edge#40")
+        .unwrap();
+    assert_eq!(edge.start.0, "sldprt:brep:vertex#51");
+    assert_eq!(edge.end.0, "sldprt:brep:vertex#50");
+    let fin = decoded
+        .coedges
+        .iter()
+        .find(|c| c.id.0 == "sldprt:brep:coedge#30")
+        .unwrap();
+    assert_eq!(fin.sense, Sense::Reversed);
+    assert_eq!(decoded.coedges.len(), 3);
+    assert!(!decoded
+        .coedges
+        .iter()
+        .any(|c| c.id.0 == "sldprt:brep:coedge#70"));
+}
+
+#[test]
 fn rejected_native_fin_graph_keeps_display_cache_and_failure_reason() {
     use crate::{brep, test_support::*, SldprtCodec};
     use cadmpeg_ir::codec::{Codec, DecodeOptions};

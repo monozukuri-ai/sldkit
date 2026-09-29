@@ -12,6 +12,17 @@ contain this implementation, without a developer-local Cargo override.
 
 ## Parsing changes
 
+The unreleased sheet-boundary update keeps an edge when its authoritative
+forward FIN is a boundary dummy outside every visible loop. After the existing
+native hierarchy and FIN normalization gates, its reciprocal visible FIN and
+ring endpoints must agree before the adapter emits the directed edge. The dummy
+remains absent from the public face loops. Unknown profiles and contradictory
+links do not use this path. This changes CadIr graph assembly, not Parasolid
+byte parsing; the published `parasolid-core` 0.3.2 dependency is unchanged.
+Synthetic native sheet records and a newly authored, saved/reopened spline
+sheet exercise this case. Stored trim and partial NURBS qualification remain
+separate gates.
+
 The Split Shaft Support update uses the published
 `parasolid-core` 0.3.2 crate. The shared crate admits the exact
 `SCH_3601228_36001_13006` hierarchy profile with the same declaration and link

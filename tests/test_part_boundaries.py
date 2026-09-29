@@ -127,3 +127,71 @@ def test_step_cylinder_groups_reject_area_and_axis_damage(tmp_path):
     model["carriers"][0]["definition"]["axis"] = [1, 0, 0]
     with pytest.raises(ValueError, match="unmatched cylinder"):
         TOOL["step_areas"](model, destination)
+
+
+def test_cylinder_hole_reference_area_with_independent_ocp(tmp_path):
+    """Independent reference for the Rust public-mapping cylinder-hole test."""
+    pytest.importorskip("OCP")
+    from OCP.BRepBuilderAPI import (
+        BRepBuilderAPI_MakeEdge,
+        BRepBuilderAPI_MakeFace,
+        BRepBuilderAPI_MakeWire,
+    )
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.BRepGProp import BRepGProp
+    from OCP.BRepLib import BRepLib
+    from OCP.GCE2d import GCE2d_MakeSegment
+    from OCP.Geom import Geom_CylindricalSurface
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pnt, gp_Pnt2d
+    from OCP.GProp import GProp_GProps
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+
+    surface = Geom_CylindricalSurface(gp_Ax3(gp_Pnt(), gp_Dir(0, 0, 1)), 2)
+
+    def wire(low, high, inner=False):
+        points = [low, (high[0], low[1]), high, (low[0], high[1])]
+        if inner:
+            points.reverse()
+        builder = BRepBuilderAPI_MakeWire()
+        for a, b in zip(points, points[1:] + points[:1], strict=True):
+            segment = GCE2d_MakeSegment(gp_Pnt2d(*a), gp_Pnt2d(*b)).Value()
+            builder.Add(BRepBuilderAPI_MakeEdge(segment, surface).Edge())
+        return builder.Wire()
+
+    builder = BRepBuilderAPI_MakeFace(surface, wire((0, 0), (5, 10)), True)
+    builder.Add(wire((1, 1), (2, 3), inner=True))
+    shape = builder.Face()
+    assert BRepLib.BuildCurves3d_s(shape)
+    assert BRepCheck_Analyzer(shape).IsValid()
+    properties = GProp_GProps()
+    BRepGProp.SurfaceProperties_s(shape, properties, 1e-12)
+    assert properties.Mass() == pytest.approx(96, abs=1e-10)
+
+    destination = tmp_path / "cylinder-hole.step"
+    writer = STEPControl_Writer()
+    assert writer.Transfer(shape, STEPControl_AsIs) == IFSelect_RetDone
+    assert writer.Write(str(destination)) == IFSelect_RetDone
+    model = {
+        "carriers": [
+            {
+                "id": "surface",
+                "definition": {
+                    "kind": "cylinder",
+                    "origin": [0, 0, 0],
+                    "axis": [0, 0, 1],
+                    "radius": 2,
+                },
+            }
+        ],
+        "faces": [
+            {"id": "face", "surface_id": "surface", "loop_ids": ["hole", "outer"]}
+        ],
+        "loops": [
+            {"id": "outer", "derived_boundary_role": {"signed_area_mm2": 100}},
+            {"id": "hole", "derived_boundary_role": {"signed_area_mm2": -4}},
+        ],
+    }
+    assert TOOL["step_areas"](model, destination)["passed"]
+    model["loops"][1]["derived_boundary_role"]["signed_area_mm2"] = 4
+    assert not TOOL["step_areas"](model, destination)["passed"]

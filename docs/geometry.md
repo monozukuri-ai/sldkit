@@ -83,6 +83,12 @@ is a decoder grouping. Its count and kind do not establish the number or
 solid/sheet classification of native bodies. Inspect provenance and losses
 before using body counts or Euler values as solid-validity checks.
 
+Within the verified native hierarchy/FIN profile, a sheet edge can take its
+stored direction from a boundary dummy FIN outside every face loop. The
+adapter requires reciprocal links and agreement with the visible loop's two
+endpoints before emitting that edge. The dummy does not become a public coedge;
+the visible coedge retains its direction relative to the edge.
+
 The disk-face `V-E+F` census is withheld (`euler_characteristic=None`) when a
 face has multiple loops, no loop, or isolated vertex uses. In particular, a
 face with holes must not produce a misleading Euler value from that formula.
@@ -161,15 +167,23 @@ nested holes, alternate use curves, ambiguous supports and unsupported
 carriers withhold the entire face's classification. Work is bounded to 128
 loops and 512 total coedges per face. Closure tolerance is `1e-7` mm.
 
-The cylindrical method accepts a single simple loop of 4–128 coedges made of
-axial lines and circular/elliptical cylinder sections. Continuous angular
-unwrapping, analytic intersection checks and positive oriented area establish
-an outer boundary. A full-period chart additionally requires an explicit pair
-of opposite derived seam uses. Multiple loops, cylinder holes and other
-periodic surfaces remain unspecified. This classification describes the
-public seam-cut loop; the two native ring loops of a full cylinder are retained
-in provenance. The cylindrical axial
-line pcurve uses the 3D carrier's parameter-zero origin and axial rate, so
+The cylindrical method accepts one simple outer loop and disjoint, contained
+holes made of axial lines and circular/elliptical cylinder sections. Continuous
+angular unwrapping, analytic intersections, containment and oriented area
+establish the roles independently of loop order. Each loop has 4–128 coedges;
+the face is limited to 128 loops and 512 total coedges. A full-period outer
+chart additionally requires an explicit pair of opposite derived seam uses.
+The current seam builder handles the two native ring loops of a full cylinder;
+it does not yet construct that chart for a full cylinder with additional holes.
+Each hole must fit strictly inside one unambiguous angular copy of the outer
+chart. Holes crossing the chart's cut, touching or nested loops, unsupported
+pcurve parameterizations and other periodic surfaces remain unspecified;
+one unsupported loop withholds classification for the whole face.
+Multiple-loop cylinder classification has synthetic tests and an independent
+OCP area reference; saved/reopened SolidWorks qualification remains pending.
+When a seam is present, classification describes the public seam-cut loop;
+the two native ring loops of a full cylinder are retained in provenance.
+The cylindrical axial line pcurve uses the 3D carrier's parameter-zero origin and axial rate, so
 `surface(pcurve(t)) == curve(t)` throughout the trimmed interval. Added seam
 topology and modified loop membership retain derived field provenance.
 These pcurves and loop roles are geometric derivations, not recovered stored

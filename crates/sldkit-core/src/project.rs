@@ -33,6 +33,16 @@ pub enum ReferenceResolutionBasis {
     SearchDirectoryRelative,
     SearchDirectoryBasename,
     HostAbsolute,
+    /// A virtual component matched to a document embedded in the referencing assembly.
+    EmbeddedVirtualComponent,
+}
+
+/// Location of a node that is stored inside another node's container.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EmbeddedNodeSource {
+    pub container_node_id: String,
+    pub entry_id: String,
+    pub stream_path: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -73,6 +83,9 @@ pub struct ProjectNode {
     pub requested_configurations: Vec<String>,
     #[serde(default)]
     pub diagnostic_codes: Vec<String>,
+    /// Present when the document is a stream inside another node's container.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_source: Option<EmbeddedNodeSource>,
 }
 
 /// One source occurrence or view reference. Repeated occurrences remain separate edges.
@@ -90,6 +103,10 @@ pub struct ProjectEdge {
     pub is_suppressed: Option<bool>,
     pub is_hidden: Option<bool>,
     pub exclude_from_bom: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_virtual: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_number: Option<i64>,
     pub resolution_status: ReferenceResolutionStatus,
     pub resolution_basis: Option<ReferenceResolutionBasis>,
     pub candidate_count: u64,
@@ -260,6 +277,7 @@ mod tests {
             selected_configuration_indices: Vec::new(),
             requested_configurations: Vec::new(),
             diagnostic_codes: Vec::new(),
+            embedded_source: None,
         }];
         let edges = vec![ProjectEdge {
             id: "edge:00000000".to_owned(),
@@ -274,6 +292,8 @@ mod tests {
             is_suppressed: None,
             is_hidden: None,
             exclude_from_bom: None,
+            is_virtual: None,
+            instance_number: None,
             resolution_status: ReferenceResolutionStatus::Missing,
             resolution_basis: None,
             candidate_count: 0,

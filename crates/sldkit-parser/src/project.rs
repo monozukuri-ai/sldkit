@@ -6,13 +6,13 @@ use std::{
 
 use sldkit_core::{
     AssemblyComponent, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind,
-    DocumentReference, ParseStatus, ProjectCompatibilityReport, ProjectConfigurationIdentity,
-    ProjectEdge, ProjectNode, ProjectScanResult, ProjectScanStatus, ReferenceKind,
-    ReferenceResolutionBasis, ReferenceResolutionStatus, ReferenceTraversalStatus, ResourceLimits,
-    SourceDocument,
+    DocumentReference, EmbeddedNodeSource, ExtractionMode, ExtractionStatus, ParseResult,
+    ParseStatus, ProjectCompatibilityReport, ProjectConfigurationIdentity, ProjectEdge,
+    ProjectNode, ProjectScanResult, ProjectScanStatus, ReferenceKind, ReferenceResolutionBasis,
+    ReferenceResolutionStatus, ReferenceTraversalStatus, ResourceLimits, SourceDocument,
 };
 
-use crate::parse_path;
+use crate::{extract_bytes, parse_bytes, parse_path, read_path_bounded};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WindowsPrefixMapping {
@@ -41,10 +41,20 @@ struct IndexRoot {
     role: IndexRootRole,
 }
 
+/// A document stored as a stream inside another indexed document.
+struct EmbeddedFile {
+    container_index: usize,
+    entry_id: String,
+    stream_path: String,
+    name: String,
+}
+
 struct IndexedFile {
+    /// Host file holding the document; for embedded documents, the outermost container.
     host_path: PathBuf,
     label: String,
     memberships: BTreeSet<usize>,
+    embedded: Option<EmbeddedFile>,
 }
 
 struct ProjectIndex {
@@ -56,11 +66,12 @@ struct ProjectIndex {
     by_host_exact: BTreeMap<PathBuf, usize>,
     by_host_folded: BTreeMap<String, Vec<usize>>,
     by_root_basename: BTreeMap<(usize, String), Vec<usize>>,
+    embedded_by_container: BTreeMap<usize, Vec<usize>>,
 }
 
 struct IndexBuild {
     index: ProjectIndex,
-    root_file_index: usize,
+    root_file_index: Option<usize>,
     diagnostics: Vec<Diagnostic>,
     partial: bool,
 }
@@ -83,6 +94,8 @@ struct ReferenceSeed {
     is_suppressed: Option<bool>,
     is_hidden: Option<bool>,
     exclude_from_bom: Option<bool>,
+    is_virtual: Option<bool>,
+    instance_number: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -112,25 +125,19 @@ pub fn scan_project_path(
     options: &ProjectScanOptions,
     limits: &ResourceLimits,
 ) -> ProjectScanResult {
-    let build = match build_index(root_document.as_ref(), options, limits) {
+    let build = match build_index(Some(root_document.as_ref()), options, limits) {
         Ok(build) => build,
         Err(diagnostic) => return rejected_result(vec![diagnostic]),
     };
-    let root_index = build.root_file_index;
-    let mut scanner = Scanner {
-        index: build.index,
-        options,
-        limits,
-        nodes: BTreeMap::new(),
-        parsed: BTreeMap::new(),
-        processed_configurations: BTreeMap::new(),
-        processed_document_references: BTreeSet::new(),
-        edges: Vec::new(),
-        diagnostics: build.diagnostics,
-        partial: build.partial,
-        rejected: false,
-        edge_limit_reported: false,
+    let Some(root_index) = build.root_file_index else {
+        return rejected_result(vec![Diagnostic::new(
+            "project.root_document_not_indexed",
+            DiagnosticSeverity::Error,
+            DiagnosticKind::Fatal,
+            "root project document was not present in the bounded directory index",
+        )]);
     };
+    let mut scanner = Scanner::new(build, options, limits);
     scanner.visit(
         root_index,
         0,
@@ -138,11 +145,66 @@ pub fn scan_project_path(
         &[root_index],
         true,
     );
-    scanner.finish(root_index)
+    scanner.finish(Some(root_index))
 }
 
-impl Scanner<'_> {
-    fn finish(mut self, root_index: usize) -> ProjectScanResult {
+/// Parse every CAD document under the project root and resolve all of their
+/// references, producing one graph in which each indexed document is a root.
+///
+/// The result answers reverse questions such as which Drawings or Assemblies
+/// reference a given Part. `options.root_configuration` is ignored; every
+/// source configuration contributes edges.
+#[must_use]
+pub fn index_project_path(
+    project_root: impl AsRef<Path>,
+    options: &ProjectScanOptions,
+    limits: &ResourceLimits,
+) -> ProjectScanResult {
+    let index_options = ProjectScanOptions {
+        project_root: Some(project_root.as_ref().to_path_buf()),
+        root_configuration: None,
+        ..options.clone()
+    };
+    let build = match build_index(None, &index_options, limits) {
+        Ok(build) => build,
+        Err(diagnostic) => return rejected_result(vec![diagnostic]),
+    };
+    let mut scanner = Scanner::new(build, options, limits);
+    let project_root_id = scanner.index.project_root_id;
+    let mut roots = scanner
+        .index
+        .files
+        .iter()
+        .enumerate()
+        .filter(|(_, file)| file.memberships.contains(&project_root_id))
+        .map(|(index, file)| (file.label.clone(), index))
+        .collect::<Vec<_>>();
+    roots.sort();
+    for (_, root_index) in roots {
+        scanner.visit(root_index, 0, None, &[root_index], true);
+    }
+    scanner.finish(None)
+}
+
+impl<'a> Scanner<'a> {
+    fn new(build: IndexBuild, options: &'a ProjectScanOptions, limits: &'a ResourceLimits) -> Self {
+        Self {
+            index: build.index,
+            options,
+            limits,
+            nodes: BTreeMap::new(),
+            parsed: BTreeMap::new(),
+            processed_configurations: BTreeMap::new(),
+            processed_document_references: BTreeSet::new(),
+            edges: Vec::new(),
+            diagnostics: build.diagnostics,
+            partial: build.partial,
+            rejected: false,
+            edge_limit_reported: false,
+        }
+    }
+
+    fn finish(mut self, root_index: Option<usize>) -> ProjectScanResult {
         self.validate_expected_document_kinds();
         let status = if self.rejected {
             ProjectScanStatus::Rejected
@@ -151,7 +213,8 @@ impl Scanner<'_> {
         } else {
             ProjectScanStatus::Complete
         };
-        let root_node_id = self.nodes.get(&root_index).map(|node| node.id.clone());
+        let root_node_id =
+            root_index.and_then(|index| self.nodes.get(&index).map(|node| node.id.clone()));
         let mut nodes = self.nodes.into_values().collect::<Vec<_>>();
         nodes.sort_by(|left, right| left.id.cmp(&right.id));
         self.edges.sort_by(|left, right| left.id.cmp(&right.id));
@@ -171,6 +234,14 @@ impl Scanner<'_> {
     fn ensure_node(&mut self, file_index: usize, depth: u32, is_root: bool) {
         let indexed = &self.index.files[file_index];
         let id = node_id(file_index);
+        let embedded_source = indexed
+            .embedded
+            .as_ref()
+            .map(|embedded| EmbeddedNodeSource {
+                container_node_id: node_id(embedded.container_index),
+                entry_id: embedded.entry_id.clone(),
+                stream_path: embedded.stream_path.clone(),
+            });
         self.nodes
             .entry(file_index)
             .and_modify(|node| {
@@ -190,7 +261,106 @@ impl Scanner<'_> {
                 selected_configuration_indices: Vec::new(),
                 requested_configurations: Vec::new(),
                 diagnostic_codes: Vec::new(),
+                embedded_source,
             });
+    }
+
+    /// Read the exact bytes of an indexed document, extracting embedded
+    /// documents from their containers on demand.
+    fn document_bytes(&mut self, file_index: usize) -> Option<Vec<u8>> {
+        let (container_index, entry_id, stream_path) = match &self.index.files[file_index].embedded
+        {
+            None => {
+                return match read_path_bounded(&self.index.files[file_index].host_path, self.limits)
+                {
+                    Ok(bytes) => Some(bytes),
+                    Err(failure) => {
+                        self.diagnostics.push(failure.diagnostic);
+                        None
+                    }
+                };
+            }
+            Some(embedded) => (
+                embedded.container_index,
+                embedded.entry_id.clone(),
+                embedded.stream_path.clone(),
+            ),
+        };
+        let container = self.document_bytes(container_index)?;
+        let extraction = extract_bytes(&container, &entry_id, ExtractionMode::Decoded, self.limits);
+        self.diagnostics
+            .extend(extraction.result.diagnostics.iter().cloned());
+        if extraction.result.status != ExtractionStatus::Extracted || extraction.data.is_none() {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    "project.embedded_document_unavailable",
+                    DiagnosticSeverity::Warning,
+                    DiagnosticKind::Unresolved,
+                    "an embedded document stream could not be extracted from its container",
+                )
+                .with_detail("node_id", node_id(file_index))
+                .with_detail("container_node_id", node_id(container_index))
+                .with_detail("stream_path", stream_path),
+            );
+        }
+        extraction.data
+    }
+
+    fn parse_indexed(&mut self, file_index: usize) -> ParseResult {
+        if self.index.files[file_index].embedded.is_none() {
+            return parse_path(&self.index.files[file_index].host_path, self.limits);
+        }
+        let label = self.index.files[file_index].label.clone();
+        match self.document_bytes(file_index) {
+            Some(bytes) => parse_bytes(&bytes, Some(&label), self.limits),
+            None => crate::rejected_parse_result(),
+        }
+    }
+
+    /// Register documents embedded in a parsed node so references can resolve to them.
+    fn register_embedded_documents(&mut self, container_index: usize, document: &SourceDocument) {
+        if self
+            .index
+            .embedded_by_container
+            .contains_key(&container_index)
+        {
+            return;
+        }
+        let mut registered = Vec::new();
+        for embedded in &document.embedded_documents {
+            if u64::try_from(self.index.files.len()).unwrap_or(u64::MAX)
+                >= self.limits.max_project_files
+            {
+                self.partial = true;
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        "limit.project_files",
+                        DiagnosticSeverity::Warning,
+                        DiagnosticKind::Unresolved,
+                        "embedded documents were not indexed beyond the configured CAD file limit",
+                    )
+                    .with_detail("limit", self.limits.max_project_files.to_string()),
+                );
+                break;
+            }
+            let container = &self.index.files[container_index];
+            let file_index = self.index.files.len();
+            self.index.files.push(IndexedFile {
+                host_path: container.host_path.clone(),
+                label: format!("{}#{}", container.label, embedded.stream_path),
+                memberships: BTreeSet::new(),
+                embedded: Some(EmbeddedFile {
+                    container_index,
+                    entry_id: embedded.entry_id.clone(),
+                    stream_path: embedded.stream_path.clone(),
+                    name: embedded.name.clone(),
+                }),
+            });
+            registered.push(file_index);
+        }
+        self.index
+            .embedded_by_container
+            .insert(container_index, registered);
     }
 
     fn load_document(
@@ -204,8 +374,11 @@ impl Scanner<'_> {
             return parsed.document.clone();
         }
 
-        let result = parse_path(&self.index.files[file_index].host_path, self.limits);
+        let result = self.parse_indexed(file_index);
         let document = result.document.clone();
+        if let Some(source) = document.as_ref() {
+            self.register_embedded_documents(file_index, source);
+        }
         if let Some(node) = self.nodes.get_mut(&file_index) {
             node.parse_status = Some(result.status);
             node.diagnostic_codes = result
@@ -412,9 +585,7 @@ impl Scanner<'_> {
         if self.project_edge_limit_reached() {
             return;
         }
-        let resolution =
-            self.index
-                .resolve(source_index, seed.stored_path.as_deref(), self.options);
+        let resolution = self.resolve_reference(source_index, &seed);
         let (candidate_count, candidate_paths) = self.reference_candidate_output(&resolution);
         let target_index = if resolution.status == ReferenceResolutionStatus::Resolved {
             resolution.candidates.first().copied()
@@ -446,6 +617,8 @@ impl Scanner<'_> {
             is_suppressed: seed.is_suppressed,
             is_hidden: seed.is_hidden,
             exclude_from_bom: seed.exclude_from_bom,
+            is_virtual: seed.is_virtual,
+            instance_number: seed.instance_number,
             resolution_status: resolution.status,
             resolution_basis: resolution.basis,
             candidate_count,
@@ -471,6 +644,40 @@ impl Scanner<'_> {
                 false,
             );
         }
+    }
+
+    /// Virtual components resolve to documents embedded in the referencing
+    /// assembly before any host-path rule. The stored temporary path of a
+    /// virtual component never identifies a project file by itself.
+    fn resolve_reference(&mut self, source_index: usize, seed: &ReferenceSeed) -> Resolution {
+        if seed.is_virtual == Some(true) {
+            let candidates = self
+                .index
+                .embedded_candidates(source_index, seed.stored_path.as_deref());
+            if !candidates.is_empty() {
+                return classify(
+                    ReferenceResolutionBasis::EmbeddedVirtualComponent,
+                    candidates,
+                );
+            }
+        }
+        let resolution =
+            self.index
+                .resolve(source_index, seed.stored_path.as_deref(), self.options);
+        if seed.is_virtual == Some(true) && resolution.status != ReferenceResolutionStatus::Resolved
+        {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    "project.virtual_component_unresolved",
+                    DiagnosticSeverity::Warning,
+                    DiagnosticKind::Unresolved,
+                    "a virtual component matched no embedded document of its assembly",
+                )
+                .with_detail("source_node_id", node_id(source_index))
+                .with_detail("stored_path", seed.stored_path.clone().unwrap_or_default()),
+            );
+        }
+        resolution
     }
 
     fn project_edge_limit_reached(&mut self) -> bool {
@@ -741,6 +948,44 @@ impl ProjectIndex {
         }
     }
 
+    /// Embedded documents of `source_index` whose name matches the stored
+    /// basename stem, before or including the `^` owner suffix.
+    fn embedded_candidates(&self, source_index: usize, stored_path: Option<&str>) -> Vec<usize> {
+        let Some(embedded) = self.embedded_by_container.get(&source_index) else {
+            return Vec::new();
+        };
+        let Some(basename) = stored_path
+            .map(normalize_source_path)
+            .as_deref()
+            .and_then(source_basename)
+            .map(str::to_owned)
+        else {
+            return Vec::new();
+        };
+        let stem = basename
+            .rsplit_once('.')
+            .map_or(basename.as_str(), |(stem, _)| stem)
+            .to_owned();
+        let owner_stripped = stem
+            .split_once('^')
+            .map_or(stem.as_str(), |(name, _)| name)
+            .to_owned();
+        let folded = [fold_name(&stem), fold_name(&owner_stripped)];
+        let mut matches = embedded
+            .iter()
+            .copied()
+            .filter(|index| {
+                self.files[*index]
+                    .embedded
+                    .as_ref()
+                    .is_some_and(|file| folded.contains(&fold_name(&file.name)))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|left, right| self.files[*left].label.cmp(&self.files[*right].label));
+        matches.dedup();
+        matches
+    }
+
     fn lookup_host(&self, path: &Path) -> Vec<usize> {
         self.by_host_folded
             .get(&fold_host_path(path))
@@ -809,7 +1054,7 @@ impl ProjectIndex {
 
 #[allow(clippy::too_many_lines)]
 fn build_index(
-    root_document: &Path,
+    root_document: Option<&Path>,
     options: &ProjectScanOptions,
     limits: &ResourceLimits,
 ) -> Result<IndexBuild, Diagnostic> {
@@ -826,27 +1071,32 @@ fn build_index(
         .with_detail("root_count", requested_root_count.to_string())
         .with_detail("limit", limits.max_project_roots.to_string()));
     }
-    let root_file = fs::canonicalize(root_document).map_err(|error| {
-        fatal_io_diagnostic(
-            "project.root_document_unreadable",
-            "root project document could not be resolved",
-            root_document,
-            &error,
-        )
-    })?;
-    if !root_file.is_file() {
-        return Err(Diagnostic::new(
-            "project.root_document_not_file",
-            DiagnosticSeverity::Error,
-            DiagnosticKind::Fatal,
-            "root project document is not a regular file",
-        )
-        .with_detail("path", display_path(&root_file)));
-    }
+    let root_file = root_document
+        .map(|root_document| {
+            let root_file = fs::canonicalize(root_document).map_err(|error| {
+                fatal_io_diagnostic(
+                    "project.root_document_unreadable",
+                    "root project document could not be resolved",
+                    root_document,
+                    &error,
+                )
+            })?;
+            if !root_file.is_file() {
+                return Err(Diagnostic::new(
+                    "project.root_document_not_file",
+                    DiagnosticSeverity::Error,
+                    DiagnosticKind::Fatal,
+                    "root project document is not a regular file",
+                )
+                .with_detail("path", display_path(&root_file)));
+            }
+            Ok(root_file)
+        })
+        .transpose()?;
     let project_root_input = options
         .project_root
         .as_deref()
-        .or_else(|| root_file.parent())
+        .or_else(|| root_file.as_deref().and_then(Path::parent))
         .unwrap_or_else(|| Path::new("."));
     let project_root = fs::canonicalize(project_root_input).map_err(|error| {
         fatal_io_diagnostic(
@@ -865,14 +1115,16 @@ fn build_index(
         )
         .with_detail("path", display_path(&project_root)));
     }
-    if !root_file.starts_with(&project_root) {
+    if let Some(root_file) = root_file.as_deref()
+        && !root_file.starts_with(&project_root)
+    {
         return Err(Diagnostic::new(
             "project.root_outside_scan_root",
             DiagnosticSeverity::Error,
             DiagnosticKind::Fatal,
             "root project document must be contained by the project scan root",
         )
-        .with_detail("root_document", display_path(&root_file))
+        .with_detail("root_document", display_path(root_file))
         .with_detail("project_root", display_path(&project_root)));
     }
 
@@ -996,6 +1248,7 @@ fn build_index(
         by_host_exact: BTreeMap::new(),
         by_host_folded: BTreeMap::new(),
         by_root_basename: BTreeMap::new(),
+        embedded_by_container: BTreeMap::new(),
     };
     let mut entries_seen = 0_u64;
     for root_id in 0..index.roots.len() {
@@ -1004,17 +1257,22 @@ fn build_index(
         diagnostics.extend(root_diagnostics);
         partial |= root_partial;
     }
-    if !index.by_host_exact.contains_key(&root_file) {
+    if let Some(root_file) = root_file.as_ref()
+        && !index.by_host_exact.contains_key(root_file)
+    {
         add_indexed_file(&mut index, project_root_id, root_file.clone(), limits)?;
     }
     finalize_lookup_maps(&mut index);
-    let Some(root_file_index) = index.by_host_exact.get(&root_file).copied() else {
-        return Err(Diagnostic::new(
-            "project.root_document_not_indexed",
-            DiagnosticSeverity::Error,
-            DiagnosticKind::Fatal,
-            "root project document was not present in the bounded directory index",
-        ));
+    let root_file_index = match root_file.as_ref() {
+        Some(root_file) => Some(index.by_host_exact.get(root_file).copied().ok_or_else(|| {
+            Diagnostic::new(
+                "project.root_document_not_indexed",
+                DiagnosticSeverity::Error,
+                DiagnosticKind::Fatal,
+                "root project document was not present in the bounded directory index",
+            )
+        })?),
+        None => None,
     };
 
     Ok(IndexBuild {
@@ -1147,6 +1405,7 @@ fn add_indexed_file(
         host_path: host_path.clone(),
         label,
         memberships: BTreeSet::from([root_id]),
+        embedded: None,
     });
     index.by_host_exact.insert(host_path, file_index);
     Ok(())
@@ -1214,6 +1473,8 @@ fn component_seed(index: usize, component: &AssemblyComponent) -> ReferenceSeed 
         is_suppressed: component.is_suppressed.as_ref().map(|value| value.value),
         is_hidden: component.is_hidden.as_ref().map(|value| value.value),
         exclude_from_bom: component.exclude_from_bom.as_ref().map(|value| value.value),
+        is_virtual: component.is_virtual.as_ref().map(|value| value.value),
+        instance_number: component.instance_number.as_ref().map(|value| value.value),
     }
 }
 
@@ -1238,6 +1499,8 @@ fn reference_seed(index: usize, reference: &DocumentReference) -> ReferenceSeed 
         is_suppressed: None,
         is_hidden: None,
         exclude_from_bom: None,
+        is_virtual: None,
+        instance_number: None,
     }
 }
 
@@ -1416,7 +1679,7 @@ mod tests {
     };
     use tempfile::TempDir;
 
-    use super::{ProjectScanOptions, WindowsPrefixMapping, scan_project_path};
+    use super::{ProjectScanOptions, WindowsPrefixMapping, index_project_path, scan_project_path};
 
     struct ComponentSpec<'a> {
         path: &'a str,
@@ -1960,6 +2223,147 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "limit.project_edges")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn virtual_components_resolve_to_embedded_documents() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = TempDir::new()?;
+        let project = temp.path();
+        let root = project.join("root.SLDASM");
+        let embedded_part = modern_file("swXmlContents/Features", part_xml().as_bytes())?;
+        let xml = r#"<root><swHeader><swFile id="0" swDocType="ASSEMBLY"/>
+            <swFile id="1" swDocType="PART" swPath="C:\Temp\swx9\VC~~\root\Inner^root.sldprt"/>
+            <swFile id="2" swDocType="PART" swPath="C:\Temp\swx9\VC~~\root\Ghost^root.sldprt"/>
+            </swHeader><swModelList>
+            <swModel id="self" swFileRef="0" swConfigurationId="0">
+            <swConfiguration swID="0" swName="Default"/>
+            <swReference swModelRef="m1" swName="Inner^root" swSuppressed="NO" swIsVirtualComponent="YES" swReferenceNumber="1"/>
+            <swReference swModelRef="m2" swName="Ghost^root" swSuppressed="NO" swIsVirtualComponent="YES" swReferenceNumber="1"/>
+            </swModel>
+            <swModel id="m1" swFileRef="1" swConfigurationName="Default"/>
+            <swModel id="m2" swFileRef="2" swConfigurationName="Default"/>
+            </swModelList></root>"#;
+        let mut container = modern_file("swXmlContents/COMPINSTANCETREE", xml.as_bytes())?;
+        let inner = modern_file("VirtualComp/Inner", &embedded_part)?;
+        container.extend_from_slice(&inner[8..]);
+        fs::write(&root, container)?;
+
+        let result = scan_project_path(
+            &root,
+            &ProjectScanOptions {
+                project_root: Some(project.to_path_buf()),
+                ..ProjectScanOptions::default()
+            },
+            &ResourceLimits::service(),
+        );
+
+        assert_eq!(result.status, ProjectScanStatus::Partial);
+        let resolved = &result.edges[0];
+        assert_eq!(
+            resolved.resolution_status,
+            ReferenceResolutionStatus::Resolved
+        );
+        assert_eq!(
+            resolved.resolution_basis,
+            Some(ReferenceResolutionBasis::EmbeddedVirtualComponent)
+        );
+        assert_eq!(
+            resolved.resolved_path.as_deref(),
+            Some("root.SLDASM#VirtualComp/Inner")
+        );
+        assert_eq!(resolved.is_virtual, Some(true));
+        assert_eq!(resolved.instance_number, Some(1));
+        assert_eq!(
+            resolved.traversal_status,
+            ReferenceTraversalStatus::Followed
+        );
+        let target = result
+            .nodes
+            .iter()
+            .find(|node| Some(node.id.as_str()) == resolved.target_node_id.as_deref())
+            .ok_or("embedded node missing")?;
+        assert_eq!(target.document_kind, Some(sldkit_core::DocumentKind::Part));
+        assert_eq!(target.parse_status, Some(sldkit_core::ParseStatus::Partial));
+        let embedded = target
+            .embedded_source
+            .as_ref()
+            .ok_or("embedded source missing")?;
+        assert_eq!(embedded.stream_path, "VirtualComp/Inner");
+        assert_eq!(
+            Some(embedded.container_node_id.as_str()),
+            result.root_node_id.as_deref()
+        );
+        let missing = &result.edges[1];
+        assert_eq!(
+            missing.resolution_status,
+            ReferenceResolutionStatus::Missing
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "project.virtual_component_unresolved")
+        );
+        assert_eq!(result.compatibility_report.scanned_node_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn index_project_makes_every_document_a_root_for_reverse_lookup()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let project = temp.path();
+        fs::create_dir(project.join("parts"))?;
+        write_part(&project.join("parts/leaf.SLDPRT"))?;
+        write_assembly(
+            &project.join("top.SLDASM"),
+            &[ComponentSpec {
+                path: "parts/leaf.SLDPRT",
+                kind: "PART",
+                name: "leaf-1",
+                suppressed: false,
+            }],
+        )?;
+        let keywords = r#"<root><Sheet Type="Sheet" Name="Sheet1" id="s1">
+            <View Name="Front" Description="Default" id="v1">parts/leaf.SLDPRT</View>
+            </Sheet></root>"#;
+        fs::write(
+            project.join("leaf.SLDDRW"),
+            modern_file("swXmlContents/KeyWords", keywords.as_bytes())?,
+        )?;
+
+        let result = index_project_path(
+            project,
+            &ProjectScanOptions::default(),
+            &ResourceLimits::service(),
+        );
+
+        assert_eq!(result.status, ProjectScanStatus::Complete);
+        assert!(result.root_node_id.is_none());
+        assert_eq!(result.nodes.len(), 3);
+        assert!(result.nodes.iter().all(|node| node.is_root));
+        let leaf = result
+            .nodes
+            .iter()
+            .find(|node| node.path == "parts/leaf.SLDPRT")
+            .ok_or("leaf node missing")?;
+        let mut referencing = result
+            .edges
+            .iter()
+            .filter(|edge| edge.target_node_id.as_deref() == Some(leaf.id.as_str()))
+            .map(|edge| edge.kind)
+            .collect::<Vec<_>>();
+        referencing.sort_by_key(|kind| format!("{kind:?}"));
+        assert_eq!(
+            referencing,
+            vec![
+                sldkit_core::ReferenceKind::AssemblyComponent,
+                sldkit_core::ReferenceKind::DrawingView
+            ]
+        );
+        assert_eq!(result.compatibility_report.scanned_node_count, 3);
         Ok(())
     }
 }

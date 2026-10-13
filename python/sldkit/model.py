@@ -125,6 +125,7 @@ class ReferenceResolutionStatus(_StringEnum):
 
 
 class ReferenceResolutionBasis(_StringEnum):
+    EMBEDDED_VIRTUAL_COMPONENT = "embedded_virtual_component"
     DOCUMENT_RELATIVE = "document_relative"
     DOCUMENT_BASENAME = "document_basename"
     PROJECT_ROOT_RELATIVE = "project_root_relative"
@@ -133,6 +134,26 @@ class ReferenceResolutionBasis(_StringEnum):
     SEARCH_DIRECTORY_RELATIVE = "search_directory_relative"
     SEARCH_DIRECTORY_BASENAME = "search_directory_basename"
     HOST_ABSOLUTE = "host_absolute"
+
+
+class EmbeddedDocumentRole(_StringEnum):
+    VIRTUAL_COMPONENT = "virtual_component"
+
+
+class BomStatus(_StringEnum):
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    REJECTED = "rejected"
+
+
+class BomChildrenState(_StringEnum):
+    EXPANDED = "expanded"
+    LEAF = "leaf"
+    SUPPRESSED = "suppressed"
+    UNRESOLVED = "unresolved"
+    CONFIGURATION_UNRESOLVED = "configuration_unresolved"
+    NOT_TRAVERSED = "not_traversed"
+    LIMIT_REACHED = "limit_reached"
 
 
 class ReferenceTraversalStatus(_StringEnum):
@@ -281,6 +302,37 @@ class GeometryByteStorage(_StringEnum):
 
 class GeometryByteOffsetBasis(_StringEnum):
     PARASOLID_BODY = "parasolid_body"
+
+
+class GeometryEvaluationStatus(_StringEnum):
+    EVALUATED = "evaluated"
+    PARTIAL = "partial"
+    UNAVAILABLE = "unavailable"
+    REJECTED = "rejected"
+
+
+class EdgeIntervalSource(_StringEnum):
+    SOURCE = "source"
+    DERIVED = "derived"
+    UNAVAILABLE = "unavailable"
+
+
+class EdgeSampleStatus(_StringEnum):
+    SAMPLED = "sampled"
+    UNSAMPLED = "unsampled"
+
+
+class EdgeSmoothness(_StringEnum):
+    SHARP = "sharp"
+    TANGENT = "tangent"
+    BOUNDARY = "boundary"
+    UNKNOWN = "unknown"
+
+
+class BoundingBoxMethod(_StringEnum):
+    EDGE_SAMPLES = "edge_samples"
+    TESSELLATION = "tessellation"
+    EDGE_SAMPLES_AND_TESSELLATION = "edge_samples_and_tessellation"
 
 
 class GeometryCarrierDomain(_StringEnum):
@@ -742,6 +794,11 @@ class AssemblyComponent:
     exclude_from_bom: SourcedValue[bool] | None
     source_model_ref: str | None
     raw_attributes: Mapping[str, str] = field(default_factory=dict)
+    is_virtual: SourcedValue[bool] | None = None
+    is_flexible: SourcedValue[bool] | None = None
+    instance_number: SourcedValue[int] | None = None
+    component_id: SourcedValue[int] | None = None
+    raw_transform: SourcedValue[tuple[str, ...]] | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> AssemblyComponent:
@@ -764,6 +821,11 @@ class AssemblyComponent:
                 str(key): str(item)
                 for key, item in value.get("raw_attributes", {}).items()
             },
+            is_virtual=_optional_sourced(value.get("is_virtual"), bool),
+            is_flexible=_optional_sourced(value.get("is_flexible"), bool),
+            instance_number=_optional_sourced(value.get("instance_number"), int),
+            component_id=_optional_sourced(value.get("component_id"), int),
+            raw_transform=_optional_sourced(value.get("raw_transform"), _string_tuple),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -781,7 +843,46 @@ class AssemblyComponent:
         }
         if self.raw_attributes:
             result["raw_attributes"] = dict(self.raw_attributes)
+        for name in (
+            "is_virtual",
+            "is_flexible",
+            "instance_number",
+            "component_id",
+        ):
+            item = getattr(self, name)
+            if item is not None:
+                result[name] = item.to_dict()
+        if self.raw_transform is not None:
+            result["raw_transform"] = {
+                **self.raw_transform.to_dict(),
+                "value": list(self.raw_transform.value),
+            }
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class ModelBoundingBox:
+    raw_value: SourcedValue[str]
+    min: tuple[str, str, str]
+    max: tuple[str, str, str]
+    length_unit: SourcedValue[str]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ModelBoundingBox:
+        return cls(
+            raw_value=SourcedValue.from_dict(value["raw_value"], str),
+            min=_string_triple(value["min"]),
+            max=_string_triple(value["max"]),
+            length_unit=SourcedValue.from_dict(value["length_unit"], str),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "raw_value": self.raw_value.to_dict(),
+            "min": list(self.min),
+            "max": list(self.max),
+            "length_unit": self.length_unit.to_dict(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -794,11 +895,14 @@ class Configuration:
     preview: BinaryResource | None
     mass_properties: MassProperties | None
     components: tuple[AssemblyComponent, ...]
+    material: SourcedValue[str] | None = None
+    bounding_box: ModelBoundingBox | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Configuration:
         preview = value.get("preview")
         mass_properties = value.get("mass_properties")
+        bounding_box = value.get("bounding_box")
         return cls(
             index=SourcedValue.from_dict(value["index"], int),
             name=_optional_sourced(value.get("name"), str),
@@ -818,6 +922,12 @@ class Configuration:
                 AssemblyComponent.from_dict(item)
                 for item in value.get("components", [])
             ),
+            material=_optional_sourced(value.get("material"), str),
+            bounding_box=(
+                None
+                if bounding_box is None
+                else ModelBoundingBox.from_dict(bounding_box)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -835,6 +945,10 @@ class Configuration:
             result["alternate_names"] = [
                 item.to_dict() for item in self.alternate_names
             ]
+        if self.material is not None:
+            result["material"] = self.material.to_dict()
+        if self.bounding_box is not None:
+            result["bounding_box"] = self.bounding_box.to_dict()
         if self.components:
             result["components"] = [item.to_dict() for item in self.components]
         return result
@@ -947,28 +1061,264 @@ class DrawingView:
 
 
 @dataclass(frozen=True, slots=True)
+class DrawingSheetFormatData:
+    raw_value: SourcedValue[str]
+    fields: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DrawingSheetFormatData:
+        return cls(
+            raw_value=SourcedValue.from_dict(value["raw_value"], str),
+            fields=tuple(str(item) for item in value.get("fields", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"raw_value": self.raw_value.to_dict(), "fields": list(self.fields)}
+
+
+_SHEET_OPTIONAL_SOURCED = (
+    "paper_size",
+    "paper_size_name",
+    "scale_numerator",
+    "scale_denominator",
+    "sheet_format_path",
+    "custom_property_view",
+    "width",
+    "height",
+)
+
+
+@dataclass(frozen=True, slots=True)
 class DrawingSheet:
     source_id: str | None
     name: SourcedValue[str] | None
     preview: BinaryResource | None
     views: tuple[DrawingView, ...]
+    paper_size: SourcedValue[str] | None = None
+    paper_size_code: SourcedValue[int] | None = None
+    paper_size_name: SourcedValue[str] | None = None
+    scale_numerator: SourcedValue[str] | None = None
+    scale_denominator: SourcedValue[str] | None = None
+    sheet_format_path: SourcedValue[str] | None = None
+    custom_property_view: SourcedValue[str] | None = None
+    width: SourcedValue[str] | None = None
+    height: SourcedValue[str] | None = None
+    format_data: DrawingSheetFormatData | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> DrawingSheet:
         preview = value.get("preview")
+        format_data = value.get("format_data")
         return cls(
             source_id=_optional_str(value.get("source_id")),
             name=_optional_sourced(value.get("name"), str),
             preview=(None if preview is None else BinaryResource.from_dict(preview)),
             views=tuple(DrawingView.from_dict(item) for item in value.get("views", [])),
+            paper_size_code=_optional_sourced(value.get("paper_size_code"), int),
+            format_data=(
+                None
+                if format_data is None
+                else DrawingSheetFormatData.from_dict(format_data)
+            ),
+            **{
+                name: _optional_sourced(value.get(name), str)
+                for name in _SHEET_OPTIONAL_SOURCED
+            },
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "source_id": self.source_id,
             "name": _sourced_dict(self.name),
             "preview": None if self.preview is None else self.preview.to_dict(),
             "views": [item.to_dict() for item in self.views],
+        }
+        for name in (*_SHEET_OPTIONAL_SOURCED, "paper_size_code"):
+            item = getattr(self, name)
+            if item is not None:
+                result[name] = item.to_dict()
+        if self.format_data is not None:
+            result["format_data"] = self.format_data.to_dict()
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class UnitSetting:
+    property_name: str
+    code: SourcedValue[int]
+    name: SourcedValue[str] | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> UnitSetting:
+        return cls(
+            property_name=str(value["property_name"]),
+            code=SourcedValue.from_dict(value["code"], int),
+            name=_optional_sourced(value.get("name"), str),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "property_name": self.property_name,
+            "code": self.code.to_dict(),
+            "name": _sourced_dict(self.name),
+        }
+
+
+_UNIT_SETTING_FIELDS = (
+    "unit_system",
+    "length",
+    "dual_length",
+    "angle",
+    "mass_property_length",
+    "mass",
+    "volume",
+)
+_UNIT_PLACES_FIELDS = (
+    "length_decimal_places",
+    "dual_length_decimal_places",
+    "angle_decimal_places",
+    "mass_property_decimal_places",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentUnits:
+    unit_system: UnitSetting | None = None
+    length: UnitSetting | None = None
+    length_decimal_places: SourcedValue[int] | None = None
+    dual_length: UnitSetting | None = None
+    dual_length_decimal_places: SourcedValue[int] | None = None
+    angle: UnitSetting | None = None
+    angle_decimal_places: SourcedValue[int] | None = None
+    mass_property_length: UnitSetting | None = None
+    mass_property_decimal_places: SourcedValue[int] | None = None
+    mass: UnitSetting | None = None
+    volume: UnitSetting | None = None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DocumentUnits:
+        settings = {
+            name: (
+                None if value.get(name) is None else UnitSetting.from_dict(value[name])
+            )
+            for name in _UNIT_SETTING_FIELDS
+        }
+        places = {
+            name: _optional_sourced(value.get(name), int)
+            for name in _UNIT_PLACES_FIELDS
+        }
+        return cls(**settings, **places)
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for name in (*_UNIT_SETTING_FIELDS, *_UNIT_PLACES_FIELDS):
+            item = getattr(self, name)
+            if item is not None:
+                result[name] = item.to_dict()
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureDimension:
+    name: str | None
+    raw_value: str
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> FeatureDimension:
+        return cls(
+            name=_optional_str(value.get("name")), raw_value=str(value["raw_value"])
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "raw_value": self.raw_value}
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureRecord:
+    source_tag: str
+    source_id: str | None
+    name: SourcedValue[str] | None
+    source_type: str | None
+    dissectable: bool | None
+    dissectable_root: bool | None
+    dissectable_children: tuple[str, ...]
+    dimensions: tuple[FeatureDimension, ...]
+    raw_attributes: Mapping[str, str]
+    stream_path: str
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> FeatureRecord:
+        return cls(
+            source_tag=str(value["source_tag"]),
+            source_id=_optional_str(value.get("source_id")),
+            name=_optional_sourced(value.get("name"), str),
+            source_type=_optional_str(value.get("source_type")),
+            dissectable=_optional_bool(value.get("dissectable")),
+            dissectable_root=_optional_bool(value.get("dissectable_root")),
+            dissectable_children=tuple(
+                str(item) for item in value.get("dissectable_children", [])
+            ),
+            dimensions=tuple(
+                FeatureDimension.from_dict(item) for item in value.get("dimensions", [])
+            ),
+            raw_attributes={
+                str(key): str(item)
+                for key, item in value.get("raw_attributes", {}).items()
+            },
+            stream_path=str(value["stream_path"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "source_tag": self.source_tag,
+            "source_id": self.source_id,
+            "name": _sourced_dict(self.name),
+            "source_type": self.source_type,
+            "dissectable": self.dissectable,
+            "dissectable_root": self.dissectable_root,
+            "stream_path": self.stream_path,
+        }
+        if self.dissectable_children:
+            result["dissectable_children"] = list(self.dissectable_children)
+        if self.dimensions:
+            result["dimensions"] = [item.to_dict() for item in self.dimensions]
+        if self.raw_attributes:
+            result["raw_attributes"] = dict(self.raw_attributes)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddedDocument:
+    role: EmbeddedDocumentRole
+    name: str
+    entry_id: str
+    stream_path: str
+    byte_len: int | None
+    sha256: str | None
+    envelope: Envelope | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EmbeddedDocument:
+        envelope = value.get("envelope")
+        return cls(
+            role=EmbeddedDocumentRole(value["role"]),
+            name=str(value["name"]),
+            entry_id=str(value["entry_id"]),
+            stream_path=str(value["stream_path"]),
+            byte_len=_optional_int(value.get("byte_len")),
+            sha256=_optional_str(value.get("sha256")),
+            envelope=None if envelope is None else Envelope(envelope),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role.value,
+            "name": self.name,
+            "entry_id": self.entry_id,
+            "stream_path": self.stream_path,
+            "byte_len": self.byte_len,
+            "sha256": self.sha256,
+            "envelope": None if self.envelope is None else self.envelope.value,
         }
 
 
@@ -2692,6 +3042,373 @@ class GeometryResult:
 
 
 @dataclass(frozen=True, slots=True)
+class GeometryEvaluationOptions:
+    chord_tolerance_mm: float = 0.01
+    max_segments_per_edge: int = 512
+    tangent_angle_deg: float = 0.5
+    mesh_feature_angle_deg: float = 30.0
+    configuration: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryEvaluationOptions:
+        return cls(
+            chord_tolerance_mm=float(value.get("chord_tolerance_mm", 0.01)),
+            max_segments_per_edge=int(value.get("max_segments_per_edge", 512)),
+            tangent_angle_deg=float(value.get("tangent_angle_deg", 0.5)),
+            mesh_feature_angle_deg=float(value.get("mesh_feature_angle_deg", 30.0)),
+            configuration=_optional_str(value.get("configuration")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "chord_tolerance_mm": self.chord_tolerance_mm,
+            "max_segments_per_edge": self.max_segments_per_edge,
+            "tangent_angle_deg": self.tangent_angle_deg,
+            "mesh_feature_angle_deg": self.mesh_feature_angle_deg,
+            "configuration": self.configuration,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedBounds:
+    min: tuple[float, float, float]
+    max: tuple[float, float, float]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EvaluatedBounds:
+        return cls(min=_float_triple(value["min"]), max=_float_triple(value["max"]))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"min": list(self.min), "max": list(self.max)}
+
+    @property
+    def size(self) -> tuple[float, float, float]:
+        """Extent along each axis in millimetres."""
+        return (
+            self.max[0] - self.min[0],
+            self.max[1] - self.min[1],
+            self.max[2] - self.min[2],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedBoundingBox:
+    bounds: EvaluatedBounds
+    method: BoundingBoxMethod
+    exact: bool
+    edge_count: int
+    vertex_count: int
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EvaluatedBoundingBox:
+        return cls(
+            bounds=EvaluatedBounds.from_dict(value["bounds"]),
+            method=BoundingBoxMethod(value["method"]),
+            exact=bool(value["exact"]),
+            edge_count=int(value["edge_count"]),
+            vertex_count=int(value["vertex_count"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bounds": self.bounds.to_dict(),
+            "method": self.method.value,
+            "exact": self.exact,
+            "edge_count": self.edge_count,
+            "vertex_count": self.vertex_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedEdge:
+    edge_id: str
+    curve_id: str | None
+    curve_kind: str
+    body_id: str | None
+    interval_source: EdgeIntervalSource
+    parameter_range: tuple[float, float] | None
+    status: EdgeSampleStatus
+    reason: str | None
+    polyline: tuple[tuple[float, float, float], ...]
+    segment_count: int
+    chord_tolerance_mm: float | None
+    adjacent_face_ids: tuple[str, ...]
+    smoothness: EdgeSmoothness
+    dihedral_angle_deg: float | None
+    is_derived_seam: bool
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EvaluatedEdge:
+        return cls(
+            edge_id=str(value["edge_id"]),
+            curve_id=_optional_str(value.get("curve_id")),
+            curve_kind=str(value["curve_kind"]),
+            body_id=_optional_str(value.get("body_id")),
+            interval_source=EdgeIntervalSource(value["interval_source"]),
+            parameter_range=_optional_float_pair(value.get("parameter_range")),
+            status=EdgeSampleStatus(value["status"]),
+            reason=_optional_str(value.get("reason")),
+            polyline=tuple(_float_triple(item) for item in value.get("polyline", [])),
+            segment_count=int(value["segment_count"]),
+            chord_tolerance_mm=_optional_float(value.get("chord_tolerance_mm")),
+            adjacent_face_ids=tuple(
+                str(item) for item in value.get("adjacent_face_ids", [])
+            ),
+            smoothness=EdgeSmoothness(value["smoothness"]),
+            dihedral_angle_deg=_optional_float(value.get("dihedral_angle_deg")),
+            is_derived_seam=bool(value["is_derived_seam"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "edge_id": self.edge_id,
+            "curve_id": self.curve_id,
+            "curve_kind": self.curve_kind,
+            "body_id": self.body_id,
+            "interval_source": self.interval_source.value,
+            "parameter_range": (
+                None if self.parameter_range is None else list(self.parameter_range)
+            ),
+            "status": self.status.value,
+            "reason": self.reason,
+            "segment_count": self.segment_count,
+            "chord_tolerance_mm": self.chord_tolerance_mm,
+            "smoothness": self.smoothness.value,
+            "dihedral_angle_deg": self.dihedral_angle_deg,
+            "is_derived_seam": self.is_derived_seam,
+        }
+        if self.polyline:
+            result["polyline"] = [list(point) for point in self.polyline]
+        if self.adjacent_face_ids:
+            result["adjacent_face_ids"] = list(self.adjacent_face_ids)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedBodyBounds:
+    body_id: str
+    bounding_box: EvaluatedBoundingBox | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EvaluatedBodyBounds:
+        box = value.get("bounding_box")
+        return cls(
+            body_id=str(value["body_id"]),
+            bounding_box=None if box is None else EvaluatedBoundingBox.from_dict(box),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "body_id": self.body_id,
+            "bounding_box": (
+                None if self.bounding_box is None else self.bounding_box.to_dict()
+            ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedConfigurationBounds:
+    configuration_id: str
+    name: str | None
+    body_ids: tuple[str, ...] | None
+    bounding_box: EvaluatedBoundingBox | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EvaluatedConfigurationBounds:
+        body_ids = value.get("body_ids")
+        box = value.get("bounding_box")
+        return cls(
+            configuration_id=str(value["configuration_id"]),
+            name=_optional_str(value.get("name")),
+            body_ids=None
+            if body_ids is None
+            else tuple(str(item) for item in body_ids),
+            bounding_box=None if box is None else EvaluatedBoundingBox.from_dict(box),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "configuration_id": self.configuration_id,
+            "name": self.name,
+            "body_ids": None if self.body_ids is None else list(self.body_ids),
+            "bounding_box": (
+                None if self.bounding_box is None else self.bounding_box.to_dict()
+            ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedMesh:
+    tessellation_id: str
+    body_id: str | None
+    vertex_count: int
+    triangle_count: int
+    bounds: EvaluatedBounds | None
+    area_mm2: float
+    is_closed: bool | None
+    signed_volume_mm3: float | None
+    feature_edges: tuple[tuple[int, int], ...]
+    boundary_edges: tuple[tuple[int, int], ...]
+    feature_angle_deg: float
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EvaluatedMesh:
+        bounds = value.get("bounds")
+        return cls(
+            tessellation_id=str(value["tessellation_id"]),
+            body_id=_optional_str(value.get("body_id")),
+            vertex_count=int(value["vertex_count"]),
+            triangle_count=int(value["triangle_count"]),
+            bounds=None if bounds is None else EvaluatedBounds.from_dict(bounds),
+            area_mm2=float(value["area_mm2"]),
+            is_closed=_optional_bool(value.get("is_closed")),
+            signed_volume_mm3=_optional_float(value.get("signed_volume_mm3")),
+            feature_edges=tuple(
+                _int_pair(item) for item in value.get("feature_edges", [])
+            ),
+            boundary_edges=tuple(
+                _int_pair(item) for item in value.get("boundary_edges", [])
+            ),
+            feature_angle_deg=float(value["feature_angle_deg"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "tessellation_id": self.tessellation_id,
+            "body_id": self.body_id,
+            "vertex_count": self.vertex_count,
+            "triangle_count": self.triangle_count,
+            "bounds": None if self.bounds is None else self.bounds.to_dict(),
+            "area_mm2": self.area_mm2,
+            "is_closed": self.is_closed,
+            "signed_volume_mm3": self.signed_volume_mm3,
+            "feature_angle_deg": self.feature_angle_deg,
+        }
+        if self.feature_edges:
+            result["feature_edges"] = [list(item) for item in self.feature_edges]
+        if self.boundary_edges:
+            result["boundary_edges"] = [list(item) for item in self.boundary_edges]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryEvaluationSummary:
+    edge_count: int
+    sampled_edge_count: int
+    unsampled_edge_count: int
+    sharp_edge_count: int
+    tangent_edge_count: int
+    boundary_edge_count: int
+    unknown_smoothness_count: int
+    mesh_count: int
+    closed_mesh_count: int
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryEvaluationSummary:
+        return cls(**{name: int(value[name]) for name in cls.__dataclass_fields__})
+
+    def to_dict(self) -> dict[str, int]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryEvaluationDocument:
+    source: SourceInfo
+    length_unit: str
+    options: GeometryEvaluationOptions
+    bounding_box: EvaluatedBoundingBox | None
+    body_bounds: tuple[EvaluatedBodyBounds, ...]
+    configuration_bounds: tuple[EvaluatedConfigurationBounds, ...]
+    edges: tuple[EvaluatedEdge, ...]
+    meshes: tuple[EvaluatedMesh, ...]
+    summary: GeometryEvaluationSummary
+    losses: tuple[GeometryLoss, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryEvaluationDocument:
+        box = value.get("bounding_box")
+        return cls(
+            source=SourceInfo.from_dict(value["source"]),
+            length_unit=str(value["length_unit"]),
+            options=GeometryEvaluationOptions.from_dict(value["options"]),
+            bounding_box=None if box is None else EvaluatedBoundingBox.from_dict(box),
+            body_bounds=tuple(
+                EvaluatedBodyBounds.from_dict(item)
+                for item in value.get("body_bounds", [])
+            ),
+            configuration_bounds=tuple(
+                EvaluatedConfigurationBounds.from_dict(item)
+                for item in value.get("configuration_bounds", [])
+            ),
+            edges=tuple(
+                EvaluatedEdge.from_dict(item) for item in value.get("edges", [])
+            ),
+            meshes=tuple(
+                EvaluatedMesh.from_dict(item) for item in value.get("meshes", [])
+            ),
+            summary=GeometryEvaluationSummary.from_dict(value["summary"]),
+            losses=tuple(
+                GeometryLoss.from_dict(item) for item in value.get("losses", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source.to_dict(),
+            "length_unit": self.length_unit,
+            "options": self.options.to_dict(),
+            "bounding_box": (
+                None if self.bounding_box is None else self.bounding_box.to_dict()
+            ),
+            "body_bounds": [item.to_dict() for item in self.body_bounds],
+            "configuration_bounds": [
+                item.to_dict() for item in self.configuration_bounds
+            ],
+            "edges": [item.to_dict() for item in self.edges],
+            "meshes": [item.to_dict() for item in self.meshes],
+            "summary": self.summary.to_dict(),
+            "losses": [item.to_dict() for item in self.losses],
+        }
+
+    def sampled_edges(self) -> tuple[EvaluatedEdge, ...]:
+        """Return the edges that have a polyline."""
+        return tuple(
+            edge for edge in self.edges if edge.status is EdgeSampleStatus.SAMPLED
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryEvaluationResult:
+    status: GeometryEvaluationStatus
+    evaluation: GeometryEvaluationDocument | None
+    diagnostics: tuple[Diagnostic, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> GeometryEvaluationResult:
+        evaluation = value.get("evaluation")
+        return cls(
+            status=GeometryEvaluationStatus(value["status"]),
+            evaluation=(
+                None
+                if evaluation is None
+                else GeometryEvaluationDocument.from_dict(evaluation)
+            ),
+            diagnostics=tuple(
+                Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "evaluation": (
+                None if self.evaluation is None else self.evaluation.to_dict()
+            ),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SourceDocument:
     source: SourceInfo
     envelope: SourcedValue[Envelope]
@@ -2703,11 +3420,15 @@ class SourceDocument:
     preview: BinaryResource | None
     sheets: tuple[DrawingSheet, ...]
     unknown_records: tuple[UnknownRecord, ...]
+    units: DocumentUnits | None = None
+    feature_records: tuple[FeatureRecord, ...] = ()
+    embedded_documents: tuple[EmbeddedDocument, ...] = ()
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> SourceDocument:
         internal_version = value.get("internal_version")
         preview = value.get("preview")
+        units = value.get("units")
         return cls(
             source=SourceInfo.from_dict(value["source"]),
             envelope=SourcedValue.from_dict(value["envelope"], Envelope),
@@ -2736,10 +3457,19 @@ class SourceDocument:
                 UnknownRecord.from_dict(item)
                 for item in value.get("unknown_records", [])
             ),
+            units=None if units is None else DocumentUnits.from_dict(units),
+            feature_records=tuple(
+                FeatureRecord.from_dict(item)
+                for item in value.get("feature_records", [])
+            ),
+            embedded_documents=tuple(
+                EmbeddedDocument.from_dict(item)
+                for item in value.get("embedded_documents", [])
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "source": self.source.to_dict(),
             "envelope": self.envelope.to_dict(),
             "document_kind": self.document_kind.to_dict(),
@@ -2755,6 +3485,17 @@ class SourceDocument:
             "sheets": [item.to_dict() for item in self.sheets],
             "unknown_records": [item.to_dict() for item in self.unknown_records],
         }
+        if self.units is not None:
+            result["units"] = self.units.to_dict()
+        if self.feature_records:
+            result["feature_records"] = [
+                item.to_dict() for item in self.feature_records
+            ]
+        if self.embedded_documents:
+            result["embedded_documents"] = [
+                item.to_dict() for item in self.embedded_documents
+            ]
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -2838,6 +3579,28 @@ class ProjectConfigurationIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddedNodeSource:
+    container_node_id: str
+    entry_id: str
+    stream_path: str
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> EmbeddedNodeSource:
+        return cls(
+            container_node_id=str(value["container_node_id"]),
+            entry_id=str(value["entry_id"]),
+            stream_path=str(value["stream_path"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "container_node_id": self.container_node_id,
+            "entry_id": self.entry_id,
+            "stream_path": self.stream_path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectNode:
     id: str
     path: str
@@ -2851,11 +3614,13 @@ class ProjectNode:
     selected_configuration_indices: tuple[int, ...]
     requested_configurations: tuple[str, ...]
     diagnostic_codes: tuple[str, ...]
+    embedded_source: EmbeddedNodeSource | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ProjectNode:
         parse_status = value.get("parse_status")
         document_kind = value.get("document_kind")
+        embedded_source = value.get("embedded_source")
         return cls(
             id=str(value["id"]),
             path=str(value["path"]),
@@ -2880,10 +3645,15 @@ class ProjectNode:
             diagnostic_codes=tuple(
                 str(item) for item in value.get("diagnostic_codes", [])
             ),
+            embedded_source=(
+                None
+                if embedded_source is None
+                else EmbeddedNodeSource.from_dict(embedded_source)
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "id": self.id,
             "path": self.path,
             "is_root": self.is_root,
@@ -2903,6 +3673,9 @@ class ProjectNode:
             "requested_configurations": list(self.requested_configurations),
             "diagnostic_codes": list(self.diagnostic_codes),
         }
+        if self.embedded_source is not None:
+            result["embedded_source"] = self.embedded_source.to_dict()
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -2926,6 +3699,8 @@ class ProjectEdge:
     resolved_path: str | None
     target_node_id: str | None
     traversal_status: ReferenceTraversalStatus
+    is_virtual: bool | None = None
+    instance_number: int | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ProjectEdge:
@@ -2963,10 +3738,12 @@ class ProjectEdge:
             resolved_path=_optional_str(value.get("resolved_path")),
             target_node_id=_optional_str(value.get("target_node_id")),
             traversal_status=ReferenceTraversalStatus(value["traversal_status"]),
+            is_virtual=_optional_bool(value.get("is_virtual")),
+            instance_number=_optional_int(value.get("instance_number")),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "id": self.id,
             "source_node_id": self.source_node_id,
             "reference_index": self.reference_index,
@@ -2993,6 +3770,11 @@ class ProjectEdge:
             "target_node_id": self.target_node_id,
             "traversal_status": self.traversal_status.value,
         }
+        if self.is_virtual is not None:
+            result["is_virtual"] = self.is_virtual
+        if self.instance_number is not None:
+            result["instance_number"] = self.instance_number
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -3081,6 +3863,308 @@ class ProjectScanResult:
             "compatibility_report": self.compatibility_report.to_dict(),
         }
 
+    def node_by_path(self, path: str) -> ProjectNode | None:
+        """Return the node whose project-relative label equals ``path``."""
+        for node in self.nodes:
+            if node.path == path:
+                return node
+        return None
+
+    def edges_to(self, node_id: str) -> tuple[ProjectEdge, ...]:
+        """Return every edge that resolved to ``node_id`` (reverse lookup)."""
+        return tuple(edge for edge in self.edges if edge.target_node_id == node_id)
+
+    def referencing_nodes(
+        self, node_id: str, *, kind: ReferenceKind | None = None
+    ) -> tuple[ProjectNode, ...]:
+        """Return the distinct nodes whose references resolve to ``node_id``."""
+        by_id = {node.id: node for node in self.nodes}
+        seen: dict[str, ProjectNode] = {}
+        for edge in self.edges_to(node_id):
+            if kind is not None and edge.kind is not kind:
+                continue
+            source = by_id.get(edge.source_node_id)
+            if source is not None:
+                seen.setdefault(source.id, source)
+        return tuple(seen.values())
+
+
+@dataclass(frozen=True, slots=True)
+class BomOptions:
+    root_configuration: str | None = None
+    include_suppressed: bool = False
+    include_excluded: bool = False
+    max_occurrences: int = 1_000_000
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> BomOptions:
+        return cls(
+            root_configuration=_optional_str(value.get("root_configuration")),
+            include_suppressed=bool(value.get("include_suppressed", False)),
+            include_excluded=bool(value.get("include_excluded", False)),
+            max_occurrences=int(value.get("max_occurrences", 1_000_000)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "root_configuration": self.root_configuration,
+            "include_suppressed": self.include_suppressed,
+            "include_excluded": self.include_excluded,
+            "max_occurrences": self.max_occurrences,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BomOccurrence:
+    id: str
+    parent_id: str | None
+    edge_id: str | None
+    node_id: str | None
+    depth: int
+    instance_name: str | None
+    instance_number: int | None
+    stored_path: str | None
+    document_kind: DocumentKind | None
+    referenced_configuration: str | None
+    configuration_index: int | None
+    is_suppressed: bool | None
+    is_hidden: bool | None
+    exclude_from_bom: bool | None
+    is_virtual: bool | None
+    resolution_status: ReferenceResolutionStatus | None
+    traversal_status: ReferenceTraversalStatus | None
+    children_state: BomChildrenState
+    counted: bool
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> BomOccurrence:
+        document_kind = value.get("document_kind")
+        resolution = value.get("resolution_status")
+        traversal = value.get("traversal_status")
+        return cls(
+            id=str(value["id"]),
+            parent_id=_optional_str(value.get("parent_id")),
+            edge_id=_optional_str(value.get("edge_id")),
+            node_id=_optional_str(value.get("node_id")),
+            depth=int(value["depth"]),
+            instance_name=_optional_str(value.get("instance_name")),
+            instance_number=_optional_int(value.get("instance_number")),
+            stored_path=_optional_str(value.get("stored_path")),
+            document_kind=(
+                None if document_kind is None else DocumentKind(document_kind)
+            ),
+            referenced_configuration=_optional_str(
+                value.get("referenced_configuration")
+            ),
+            configuration_index=_optional_int(value.get("configuration_index")),
+            is_suppressed=_optional_bool(value.get("is_suppressed")),
+            is_hidden=_optional_bool(value.get("is_hidden")),
+            exclude_from_bom=_optional_bool(value.get("exclude_from_bom")),
+            is_virtual=_optional_bool(value.get("is_virtual")),
+            resolution_status=(
+                None if resolution is None else ReferenceResolutionStatus(resolution)
+            ),
+            traversal_status=(
+                None if traversal is None else ReferenceTraversalStatus(traversal)
+            ),
+            children_state=BomChildrenState(value["children_state"]),
+            counted=bool(value["counted"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "parent_id": self.parent_id,
+            "edge_id": self.edge_id,
+            "node_id": self.node_id,
+            "depth": self.depth,
+            "instance_name": self.instance_name,
+            "instance_number": self.instance_number,
+            "stored_path": self.stored_path,
+            "document_kind": (
+                None if self.document_kind is None else self.document_kind.value
+            ),
+            "referenced_configuration": self.referenced_configuration,
+            "configuration_index": self.configuration_index,
+            "is_suppressed": self.is_suppressed,
+            "is_hidden": self.is_hidden,
+            "exclude_from_bom": self.exclude_from_bom,
+            "is_virtual": self.is_virtual,
+            "resolution_status": (
+                None if self.resolution_status is None else self.resolution_status.value
+            ),
+            "traversal_status": (
+                None if self.traversal_status is None else self.traversal_status.value
+            ),
+            "children_state": self.children_state.value,
+            "counted": self.counted,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BomItemKey:
+    node_id: str | None
+    stored_basename: str | None
+    configuration: str | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> BomItemKey:
+        return cls(
+            node_id=_optional_str(value.get("node_id")),
+            stored_basename=_optional_str(value.get("stored_basename")),
+            configuration=_optional_str(value.get("configuration")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "stored_basename": self.stored_basename,
+            "configuration": self.configuration,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BomItem:
+    key: BomItemKey
+    document_path: str | None
+    document_kind: DocumentKind | None
+    display_name: str | None
+    quantity: int
+    suppressed_quantity: int
+    excluded_quantity: int
+    unknown_state_quantity: int
+    minimum_depth: int
+    is_virtual: bool | None
+    occurrence_ids: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> BomItem:
+        document_kind = value.get("document_kind")
+        return cls(
+            key=BomItemKey.from_dict(value["key"]),
+            document_path=_optional_str(value.get("document_path")),
+            document_kind=(
+                None if document_kind is None else DocumentKind(document_kind)
+            ),
+            display_name=_optional_str(value.get("display_name")),
+            quantity=int(value["quantity"]),
+            suppressed_quantity=int(value["suppressed_quantity"]),
+            excluded_quantity=int(value["excluded_quantity"]),
+            unknown_state_quantity=int(value["unknown_state_quantity"]),
+            minimum_depth=int(value["minimum_depth"]),
+            is_virtual=_optional_bool(value.get("is_virtual")),
+            occurrence_ids=tuple(str(item) for item in value.get("occurrence_ids", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key.to_dict(),
+            "document_path": self.document_path,
+            "document_kind": (
+                None if self.document_kind is None else self.document_kind.value
+            ),
+            "display_name": self.display_name,
+            "quantity": self.quantity,
+            "suppressed_quantity": self.suppressed_quantity,
+            "excluded_quantity": self.excluded_quantity,
+            "unknown_state_quantity": self.unknown_state_quantity,
+            "minimum_depth": self.minimum_depth,
+            "is_virtual": self.is_virtual,
+            "occurrence_ids": list(self.occurrence_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BomSummary:
+    occurrence_count: int
+    item_count: int
+    part_item_count: int
+    assembly_item_count: int
+    unresolved_item_count: int
+    children_state_counts: Mapping[str, int]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> BomSummary:
+        return cls(
+            occurrence_count=int(value["occurrence_count"]),
+            item_count=int(value["item_count"]),
+            part_item_count=int(value["part_item_count"]),
+            assembly_item_count=int(value["assembly_item_count"]),
+            unresolved_item_count=int(value["unresolved_item_count"]),
+            children_state_counts=_int_mapping(value.get("children_state_counts", {})),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "occurrence_count": self.occurrence_count,
+            "item_count": self.item_count,
+            "part_item_count": self.part_item_count,
+            "assembly_item_count": self.assembly_item_count,
+            "unresolved_item_count": self.unresolved_item_count,
+            "children_state_counts": dict(self.children_state_counts),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BillOfMaterials:
+    schema_version: int
+    status: BomStatus
+    root_node_id: str | None
+    root_configuration: str | None
+    root_configuration_index: int | None
+    options: BomOptions
+    occurrences: tuple[BomOccurrence, ...]
+    items: tuple[BomItem, ...]
+    summary: BomSummary
+    diagnostics: tuple[Diagnostic, ...]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> BillOfMaterials:
+        return cls(
+            schema_version=int(value["schema_version"]),
+            status=BomStatus(value["status"]),
+            root_node_id=_optional_str(value.get("root_node_id")),
+            root_configuration=_optional_str(value.get("root_configuration")),
+            root_configuration_index=_optional_int(
+                value.get("root_configuration_index")
+            ),
+            options=BomOptions.from_dict(value["options"]),
+            occurrences=tuple(
+                BomOccurrence.from_dict(item) for item in value.get("occurrences", [])
+            ),
+            items=tuple(BomItem.from_dict(item) for item in value.get("items", [])),
+            summary=BomSummary.from_dict(value["summary"]),
+            diagnostics=tuple(
+                Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status.value,
+            "root_node_id": self.root_node_id,
+            "root_configuration": self.root_configuration,
+            "root_configuration_index": self.root_configuration_index,
+            "options": self.options.to_dict(),
+            "occurrences": [item.to_dict() for item in self.occurrences],
+            "items": [item.to_dict() for item in self.items],
+            "summary": self.summary.to_dict(),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
+        }
+
+    def part_items(self) -> tuple[BomItem, ...]:
+        """Return the aggregated items that resolved to Part documents."""
+        return tuple(
+            item for item in self.items if item.document_kind is DocumentKind.PART
+        )
+
+    def children_of(self, occurrence_id: str) -> tuple[BomOccurrence, ...]:
+        """Return the direct child occurrences of ``occurrence_id`` in source order."""
+        return tuple(
+            item for item in self.occurrences if item.parent_id == occurrence_id
+        )
+
 
 def _optional_sourced(
     value: Any,
@@ -3095,6 +4179,10 @@ def _optional_sourced(
 
 def _sourced_dict(value: SourcedValue[Any] | None) -> dict[str, Any] | None:
     return None if value is None else value.to_dict()
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    return tuple(str(item) for item in value)
 
 
 def _string_triple(value: Any) -> tuple[str, str, str]:

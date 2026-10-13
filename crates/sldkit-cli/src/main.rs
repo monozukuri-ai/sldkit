@@ -3,7 +3,8 @@ use std::{fs::OpenOptions, io::Write, path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use sldkit_core::{
-    DrawingStructureStatus, ExtractionMode, ExtractionStatus, GeometryStatus, InventoryStatus,
+    BomOptions, BomStatus, DrawingStructureStatus, ExtractionMode, ExtractionStatus,
+    GeometryEvaluationOptions, GeometryEvaluationStatus, GeometryStatus, InventoryStatus,
     LimitProfile, ParseStatus, ProbeStatus, ProjectScanStatus, ResourceLimits,
 };
 
@@ -57,6 +58,26 @@ enum Command {
         #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
         limits: LimitArg,
     },
+    /// Decode modern Part geometry and evaluate sampled edges, bounds, and meshes.
+    Evaluate {
+        path: PathBuf,
+        /// Maximum chord deviation of sampled edge polylines, in millimetres.
+        #[arg(long, default_value_t = 0.01)]
+        chord_tolerance: f64,
+        #[arg(long, default_value_t = 512)]
+        max_segments_per_edge: u32,
+        /// Dihedral angles at or below this value classify an edge as tangent.
+        #[arg(long, default_value_t = 0.5)]
+        tangent_angle: f64,
+        /// Mesh triangle pairs meeting at or above this angle produce feature edges.
+        #[arg(long, default_value_t = 30.0)]
+        mesh_feature_angle: f64,
+        /// Restrict edges, meshes, and the model bounding box to one configuration.
+        #[arg(long)]
+        configuration: Option<String>,
+        #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
+        limits: LimitArg,
+    },
     /// Inventory modern Drawing source records without assigning renderable semantics.
     Drawing {
         path: PathBuf,
@@ -79,6 +100,47 @@ enum Command {
         /// Emit only the path-free compatibility aggregate.
         #[arg(long)]
         summary: bool,
+        #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
+        limits: LimitArg,
+    },
+    /// Parse every document under a project root and resolve all references.
+    Index {
+        project_root: PathBuf,
+        #[arg(long = "search-dir")]
+        search_directories: Vec<PathBuf>,
+        #[arg(long = "windows-prefix-map", value_name = "SOURCE=TARGET")]
+        windows_prefix_mappings: Vec<String>,
+        #[arg(long)]
+        follow_suppressed: bool,
+        /// Emit only the path-free compatibility aggregate.
+        #[arg(long)]
+        summary: bool,
+        #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
+        limits: LimitArg,
+    },
+    /// Scan an assembly and expand its occurrence tree into a bill of materials.
+    Bom {
+        path: PathBuf,
+        #[arg(long)]
+        project_root: Option<PathBuf>,
+        /// Exact root configuration name; required when the root has several.
+        #[arg(long)]
+        configuration: Option<String>,
+        #[arg(long = "search-dir")]
+        search_directories: Vec<PathBuf>,
+        #[arg(long = "windows-prefix-map", value_name = "SOURCE=TARGET")]
+        windows_prefix_mappings: Vec<String>,
+        #[arg(long)]
+        follow_suppressed: bool,
+        /// Count suppressed occurrences in the quantity.
+        #[arg(long)]
+        include_suppressed: bool,
+        /// Count occurrences excluded from the BOM in the quantity.
+        #[arg(long)]
+        include_excluded: bool,
+        /// Omit the occurrence list and print only aggregated items.
+        #[arg(long)]
+        items_only: bool,
         #[arg(long, value_enum, default_value_t = LimitArg::Desktop)]
         limits: LimitArg,
     },
@@ -185,7 +247,34 @@ fn run(args: Args) -> Result<ExitCode, Box<dyn std::error::Error>> {
             })
         }
         Command::Geometry { path, limits } => run_geometry(path, limits),
+        Command::Evaluate {
+            path,
+            chord_tolerance,
+            max_segments_per_edge,
+            tangent_angle,
+            mesh_feature_angle,
+            configuration,
+            limits,
+        } => run_evaluate(
+            path,
+            &GeometryEvaluationOptions {
+                chord_tolerance_mm: chord_tolerance,
+                max_segments_per_edge,
+                tangent_angle_deg: tangent_angle,
+                mesh_feature_angle_deg: mesh_feature_angle,
+                configuration,
+            },
+            limits,
+        ),
         Command::Drawing { path, limits } => run_drawing(path, limits),
+        command @ (Command::Scan { .. } | Command::Index { .. } | Command::Bom { .. }) => {
+            run_project_command(command)
+        }
+    }
+}
+
+fn run_project_command(command: Command) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    match command {
         Command::Scan {
             path,
             project_root,
@@ -196,29 +285,125 @@ fn run(args: Args) -> Result<ExitCode, Box<dyn std::error::Error>> {
             summary,
             limits,
         } => {
-            let mappings = windows_prefix_mappings
-                .iter()
-                .map(|value| parse_windows_prefix_mapping(value))
-                .collect::<Result<Vec<_>, _>>()?;
             let options = sldkit_parser::ProjectScanOptions {
                 project_root,
                 root_configuration: configuration,
                 search_directories,
-                windows_prefix_mappings: mappings,
+                windows_prefix_mappings: parse_windows_prefix_mappings(&windows_prefix_mappings)?,
                 follow_suppressed,
             };
-            let result = sldkit_parser::scan_project_path(path, &options, &limits.limits());
+            run_scan(path, &options, summary, limits)
+        }
+        Command::Index {
+            project_root,
+            search_directories,
+            windows_prefix_mappings,
+            follow_suppressed,
+            summary,
+            limits,
+        } => {
+            let options = sldkit_parser::ProjectScanOptions {
+                project_root: None,
+                root_configuration: None,
+                search_directories,
+                windows_prefix_mappings: parse_windows_prefix_mappings(&windows_prefix_mappings)?,
+                follow_suppressed,
+            };
+            let result =
+                sldkit_parser::index_project_path(project_root, &options, &limits.limits());
             if summary {
                 write_json(&result.compatibility_report)?;
             } else {
                 write_json(&result)?;
             }
-            Ok(match result.status {
-                ProjectScanStatus::Complete => ExitCode::SUCCESS,
-                ProjectScanStatus::Partial => ExitCode::from(1),
-                ProjectScanStatus::Rejected => ExitCode::from(2),
-            })
+            Ok(scan_exit_code(result.status))
         }
+        Command::Bom {
+            path,
+            project_root,
+            configuration,
+            search_directories,
+            windows_prefix_mappings,
+            follow_suppressed,
+            include_suppressed,
+            include_excluded,
+            items_only,
+            limits,
+        } => {
+            let options = sldkit_parser::ProjectScanOptions {
+                project_root,
+                root_configuration: configuration.clone(),
+                search_directories,
+                windows_prefix_mappings: parse_windows_prefix_mappings(&windows_prefix_mappings)?,
+                follow_suppressed,
+            };
+            let bom_options = BomOptions {
+                root_configuration: configuration,
+                include_suppressed,
+                include_excluded,
+                ..BomOptions::default()
+            };
+            run_bom(path, &options, &bom_options, items_only, limits)
+        }
+        Command::Probe { .. }
+        | Command::Inspect { .. }
+        | Command::Extract { .. }
+        | Command::Parse { .. }
+        | Command::Geometry { .. }
+        | Command::Evaluate { .. }
+        | Command::Drawing { .. } => Err("not a project command".into()),
+    }
+}
+
+fn run_scan(
+    path: PathBuf,
+    options: &sldkit_parser::ProjectScanOptions,
+    summary: bool,
+    limits: LimitArg,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let result = sldkit_parser::scan_project_path(path, options, &limits.limits());
+    if summary {
+        write_json(&result.compatibility_report)?;
+    } else {
+        write_json(&result)?;
+    }
+    Ok(scan_exit_code(result.status))
+}
+
+fn run_bom(
+    path: PathBuf,
+    options: &sldkit_parser::ProjectScanOptions,
+    bom_options: &BomOptions,
+    items_only: bool,
+    limits: LimitArg,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let graph = sldkit_parser::scan_project_path(path, options, &limits.limits());
+    let mut bom = sldkit_parser::build_bill_of_materials(&graph, bom_options);
+    if items_only {
+        bom.occurrences.clear();
+    }
+    write_json(&bom)?;
+    Ok(match bom.status {
+        BomStatus::Complete => ExitCode::SUCCESS,
+        BomStatus::Partial => ExitCode::from(1),
+        BomStatus::Rejected => ExitCode::from(2),
+    })
+}
+
+fn parse_windows_prefix_mappings(
+    values: &[String],
+) -> Result<Vec<sldkit_parser::WindowsPrefixMapping>, String> {
+    values
+        .iter()
+        .map(|value| parse_windows_prefix_mapping(value))
+        .collect()
+}
+
+fn scan_exit_code(status: ProjectScanStatus) -> ExitCode {
+    match status {
+        ProjectScanStatus::Complete => ExitCode::SUCCESS,
+        ProjectScanStatus::Partial => ExitCode::from(1),
+        ProjectScanStatus::Rejected => ExitCode::from(2),
     }
 }
 
@@ -229,6 +414,22 @@ fn run_drawing(path: PathBuf, limits: LimitArg) -> Result<ExitCode, Box<dyn std:
         DrawingStructureStatus::Inventoried | DrawingStructureStatus::Partial => ExitCode::SUCCESS,
         DrawingStructureStatus::Unsupported => ExitCode::from(1),
         DrawingStructureStatus::Malformed | DrawingStructureStatus::Rejected => ExitCode::from(2),
+    })
+}
+
+fn run_evaluate(
+    path: PathBuf,
+    options: &GeometryEvaluationOptions,
+    limits: LimitArg,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let result = sldkit_parser::evaluate_geometry_path(path, &limits.limits(), options);
+    write_json(&result)?;
+    Ok(match result.status {
+        GeometryEvaluationStatus::Evaluated | GeometryEvaluationStatus::Partial => {
+            ExitCode::SUCCESS
+        }
+        GeometryEvaluationStatus::Unavailable => ExitCode::from(1),
+        GeometryEvaluationStatus::Rejected => ExitCode::from(2),
     })
 }
 

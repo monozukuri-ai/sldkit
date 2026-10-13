@@ -12,12 +12,15 @@ parsed.
 | Container inventory | Bounded stream and storage inventory for recognized layouts |
 | Stream extraction | Stored or decoded entry bytes, plus exact parser-produced binary resources with path/range/SHA-256 revalidation |
 | Modern documents | Partial decoding of document kind, properties, configurations, cached metadata, assembly references, drawing sheets, and drawing-view references |
+| Typed document facts | Component flags and raw transform tokens, saved bounding boxes, material labels, unit settings, feature-record inventory, sheet size/scale/format facts, and embedded virtual-component documents; see [document facts](document-facts.md) |
 | Modern Part geometry | Explicit partial decoding of B-Rep topology, analytic and NURBS carriers, display tessellation, configuration body state, provenance, and loss records |
 | Modern Drawing structure | Deterministic inventory of `KeyWords` XML elements with exact decoded ranges, hierarchy, parsed source fields, direct sheet/view membership, and exact unframed carrier identities |
 | Legacy OLE2/CFB documents | Partial decoding of document kind, internal version, standard and application property sets, selected configuration headers, and DIB or PNG previews |
-| Project scanning | Bounded dependency graph for decoded Part, Assembly, and Drawing references |
+| Geometry evaluation | Kernel-free sampled edge polylines, bounding boxes, edge smoothness from adjacent face normals, and mesh quantities over decoded modern Part geometry |
+| Project scanning | Bounded dependency graph for decoded Part, Assembly, and Drawing references, including virtual components embedded in their assembly |
+| Project index and bill of materials | Whole-project reverse-reference graph and occurrence expansion with per-document, per-configuration quantities |
 | Python API | Typed models corresponding to the Rust JSON contract |
-| Command-line interface | Probe, inspect, extract, parse, geometry, Drawing structure, and project scan operations |
+| Command-line interface | Probe, inspect, extract, parse, geometry, evaluate, Drawing structure, project scan, project index, and bill-of-materials operations |
 | Python HTML viewer | Recovered triangle meshes with camera and visibility controls, bounded saved PNG/DIB previews, and parse diagnostics; no geometry reconstruction |
 
 Modern parsing is limited to observed layouts. Internal version values are
@@ -48,8 +51,12 @@ partially parsed SolidWorks document.
   and geometry
 - Semantic decoding of ZIP/OPC SolidWorks content
 - Legacy, Assembly, and Drawing B-Rep or tessellation geometry
-- Feature-history reconstruction
-- Mate semantics and component occurrence transforms
+- Feature-history reconstruction; the saved feature-record inventory is a
+  name and display-value index only
+- Mate semantics and component occurrence transforms; the sixteen `swTransform`
+  tokens are retained as unverified evidence
+- Material density and mass derivation; material labels are not resolved
+  against a material library
 - Renderable Drawing entities, dimensions, annotations, projection, and view transforms
 - Native file writing or round-trip editing
 
@@ -73,6 +80,14 @@ inventory. `partial` can contain exact XML record ranges and carrier hashes
 while binary record framing, typed fields, and exclusive byte partitioning
 remain unverified. Stable inventory IDs are not persistent references across a
 modified save.
+
+`GeometryEvaluationStatus` describes the kernel-free evaluation of decoded
+geometry. `partial` keeps sampled edges and bounds while listing withheld edges,
+normals, or meshes as losses.
+
+`BomStatus` describes occurrence expansion over a scanned graph. `partial`
+means at least one occurrence could not be expanded or resolved; `rejected`
+means the root configuration was ambiguous or the graph itself was rejected.
 
 `ProjectScanStatus` describes reference resolution for a project. `complete`
 means every decoded reference required by the selected traversal was resolved

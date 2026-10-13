@@ -134,6 +134,84 @@ fn scan_project_json(
 }
 
 #[pyfunction]
+fn evaluate_geometry_bytes_json(
+    data: &[u8],
+    filename: Option<&str>,
+    profile: &str,
+    options_json: &str,
+) -> PyResult<String> {
+    let options = evaluation_options(options_json)?;
+    to_json(&sldkit_parser::evaluate_geometry_bytes(
+        data,
+        filename,
+        &limits_for_profile(profile)?,
+        &options,
+    ))
+}
+
+#[pyfunction]
+fn evaluate_geometry_file_json(path: &str, profile: &str, options_json: &str) -> PyResult<String> {
+    let options = evaluation_options(options_json)?;
+    to_json(&sldkit_parser::evaluate_geometry_path(
+        path,
+        &limits_for_profile(profile)?,
+        &options,
+    ))
+}
+
+#[pyfunction]
+fn evaluate_geometry_json(document_json: &str, options_json: &str) -> PyResult<String> {
+    let document: sldkit_core::GeometryDocument = serde_json::from_str(document_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid geometry document: {error}")))?;
+    let options = evaluation_options(options_json)?;
+    to_json(&sldkit_parser::evaluate_geometry(&document, &options))
+}
+
+fn evaluation_options(options_json: &str) -> PyResult<sldkit_core::GeometryEvaluationOptions> {
+    serde_json::from_str(options_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid evaluation options: {error}")))
+}
+
+#[pyfunction]
+fn index_project_json(
+    project_root: &str,
+    search_directories: Vec<String>,
+    windows_prefix_mappings: Vec<(String, String)>,
+    follow_suppressed: bool,
+    profile: &str,
+) -> PyResult<String> {
+    let options = sldkit_parser::ProjectScanOptions {
+        project_root: None,
+        root_configuration: None,
+        search_directories: search_directories.into_iter().map(Into::into).collect(),
+        windows_prefix_mappings: windows_prefix_mappings
+            .into_iter()
+            .map(
+                |(source_prefix, target_directory)| sldkit_parser::WindowsPrefixMapping {
+                    source_prefix,
+                    target_directory: target_directory.into(),
+                },
+            )
+            .collect(),
+        follow_suppressed,
+    };
+    to_json(&sldkit_parser::index_project_path(
+        project_root,
+        &options,
+        &limits_for_profile(profile)?,
+    ))
+}
+
+#[pyfunction]
+fn build_bom_json(graph_json: &str, options_json: &str) -> PyResult<String> {
+    let graph: sldkit_core::ProjectScanResult = serde_json::from_str(graph_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid project graph: {error}")))?;
+    let options: sldkit_core::BomOptions = serde_json::from_str(options_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid BOM options: {error}")))?;
+    to_json(&sldkit_parser::build_bill_of_materials(&graph, &options))
+}
+
+#[pyfunction]
 fn extract_bytes_result<'py>(
     py: Python<'py>,
     data: &[u8],
@@ -258,7 +336,12 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
         decode_drawing_structure_file_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_geometry_bytes_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_geometry_file_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_geometry_json, module)?)?;
     module.add_function(wrap_pyfunction!(scan_project_json, module)?)?;
+    module.add_function(wrap_pyfunction!(index_project_json, module)?)?;
+    module.add_function(wrap_pyfunction!(build_bom_json, module)?)?;
     module.add_function(wrap_pyfunction!(extract_bytes_result, module)?)?;
     module.add_function(wrap_pyfunction!(extract_file_result, module)?)?;
     module.add_function(wrap_pyfunction!(extract_resource_bytes_result, module)?)?;

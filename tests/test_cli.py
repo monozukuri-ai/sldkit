@@ -158,3 +158,39 @@ def test_scan_cli_can_emit_path_free_summary(tmp_path, capsys):
     assert output["node_count"] == 2
     assert output["edge_count"] == 1
     assert "root.SLDASM" not in json.dumps(output)
+
+
+def test_index_and_bom_cli_emit_machine_readable_results(tmp_path, capsys):
+    from test_api import assembly_file, part_file
+
+    (tmp_path / "leaf.SLDPRT").write_bytes(part_file())
+    root = tmp_path / "root.SLDASM"
+    root.write_bytes(assembly_file(("leaf.SLDPRT", "PART", "leaf-1", False)))
+
+    assert main(["index", str(tmp_path), "--summary"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["node_count"] == 2
+    assert "leaf" not in json.dumps(summary)
+
+    assert (
+        main(["bom", str(root), "--project-root", str(tmp_path), "--items-only"]) == 0
+    )
+    bom = json.loads(capsys.readouterr().out)
+    assert bom["status"] == "complete"
+    assert bom["occurrences"] == []
+    assert [item["display_name"] for item in bom["items"]] == ["leaf.SLDPRT"]
+
+
+def test_evaluate_cli_accepts_partial_result(tmp_path, capsys):
+    from test_api import display_list_payload, modern_frame, part_file
+
+    path = tmp_path / "cache.SLDPRT"
+    path.write_bytes(
+        part_file() + modern_frame("Contents/DisplayLists", display_list_payload())
+    )
+
+    assert main(["evaluate", str(path), "--mesh-feature-angle", "45"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "evaluated"
+    assert payload["evaluation"]["options"]["mesh_feature_angle_deg"] == 45.0
+    assert len(payload["evaluation"]["meshes"]) == 1

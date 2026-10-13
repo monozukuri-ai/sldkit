@@ -7,13 +7,24 @@ from os import PathLike
 from typing import Any
 
 from . import _core
-from .errors import DrawingStructureError, GeometryError, ParseError
+from .errors import (
+    DrawingStructureError,
+    GeometryError,
+    GeometryEvaluationError,
+    ParseError,
+)
 from .model import (
+    BillOfMaterials,
     BinaryResource,
+    BomOptions,
     DrawingStructureResult,
     DrawingStructureStatus,
     ExtractionMode,
     ExtractionResult,
+    GeometryDocument,
+    GeometryEvaluationOptions,
+    GeometryEvaluationResult,
+    GeometryEvaluationStatus,
     GeometryResult,
     GeometryStatus,
     InventoryResult,
@@ -202,6 +213,89 @@ def decode_geometry_file(
     return _apply_geometry_strict(GeometryResult.from_dict(payload), strict)
 
 
+def evaluate_geometry_bytes(
+    data: BytesLike,
+    *,
+    filename: str | None = None,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+    options: GeometryEvaluationOptions | None = None,
+    **option_overrides: Any,
+) -> GeometryEvaluationResult:
+    """Decode modern Part geometry and evaluate edges, bounds, and meshes.
+
+    Options can be passed as a ``GeometryEvaluationOptions`` or as keyword
+    overrides such as ``chord_tolerance_mm=0.05`` or ``configuration="Default"``.
+    """
+    payload = _load_json(
+        _core.evaluate_geometry_bytes_json(
+            bytes(data),
+            filename,
+            _profile_name(profile),
+            _evaluation_options_json(options, option_overrides),
+        )
+    )
+    return _apply_evaluation_strict(GeometryEvaluationResult.from_dict(payload), strict)
+
+
+def evaluate_geometry_file(
+    path: PathType,
+    *,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+    options: GeometryEvaluationOptions | None = None,
+    **option_overrides: Any,
+) -> GeometryEvaluationResult:
+    """Read a path, decode its modern Part geometry, and evaluate it."""
+    payload = _load_json(
+        _core.evaluate_geometry_file_json(
+            os.fsdecode(os.fspath(path)),
+            _profile_name(profile),
+            _evaluation_options_json(options, option_overrides),
+        )
+    )
+    return _apply_evaluation_strict(GeometryEvaluationResult.from_dict(payload), strict)
+
+
+def evaluate_geometry(
+    geometry: GeometryResult | GeometryDocument,
+    *,
+    strict: bool = False,
+    options: GeometryEvaluationOptions | None = None,
+    **option_overrides: Any,
+) -> GeometryEvaluationResult:
+    """Evaluate an already decoded geometry result or document.
+
+    A ``GeometryResult`` without a geometry document yields ``UNAVAILABLE``.
+    """
+    document = geometry.geometry if isinstance(geometry, GeometryResult) else geometry
+    if document is None:
+        result = GeometryEvaluationResult(
+            status=GeometryEvaluationStatus.UNAVAILABLE,
+            evaluation=None,
+            diagnostics=(),
+        )
+        return _apply_evaluation_strict(result, strict)
+    payload = _load_json(
+        _core.evaluate_geometry_json(
+            json.dumps(document.to_dict(), separators=(",", ":")),
+            _evaluation_options_json(options, option_overrides),
+        )
+    )
+    return _apply_evaluation_strict(GeometryEvaluationResult.from_dict(payload), strict)
+
+
+def _evaluation_options_json(
+    options: GeometryEvaluationOptions | None, overrides: Mapping[str, Any]
+) -> str:
+    base = GeometryEvaluationOptions() if options is None else options
+    unknown = set(overrides) - set(GeometryEvaluationOptions.__dataclass_fields__)
+    if unknown:
+        raise TypeError(f"unknown evaluation options: {sorted(unknown)}")
+    merged = {**base.to_dict(), **overrides}
+    return json.dumps(merged, separators=(",", ":"), sort_keys=True)
+
+
 def decode_drawing_structure_bytes(
     data: BytesLike,
     *,
@@ -274,6 +368,68 @@ def scan_project(
     return ProjectScanResult.from_dict(payload)
 
 
+def index_project(
+    project_root: PathType,
+    *,
+    search_directories: Iterable[PathType] = (),
+    windows_prefix_mappings: WindowsPrefixMappings | None = None,
+    follow_suppressed: bool = False,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+) -> ProjectScanResult:
+    """Parse every document under a root and resolve all references.
+
+    Each indexed document is a root node, so ``ProjectScanResult.edges_to`` and
+    ``referencing_nodes`` answer which Drawings or Assemblies use a document.
+    """
+    payload = _load_json(
+        _core.index_project_json(
+            os.fsdecode(os.fspath(project_root)),
+            [os.fsdecode(os.fspath(item)) for item in search_directories],
+            _prefix_mapping_pairs(windows_prefix_mappings),
+            follow_suppressed,
+            _profile_name(profile),
+        )
+    )
+    return ProjectScanResult.from_dict(payload)
+
+
+def build_bom(
+    graph: ProjectScanResult,
+    *,
+    root_configuration: str | None = None,
+    include_suppressed: bool = False,
+    include_excluded: bool = False,
+    max_occurrences: int = 1_000_000,
+) -> BillOfMaterials:
+    """Expand a scanned graph's root occurrence tree into aggregated quantities.
+
+    The root configuration must be unambiguous: pass its exact name, or scan
+    the project with a selected configuration.
+    """
+    options = BomOptions(
+        root_configuration=root_configuration,
+        include_suppressed=include_suppressed,
+        include_excluded=include_excluded,
+        max_occurrences=max_occurrences,
+    )
+    payload = _load_json(
+        _core.build_bom_json(
+            json.dumps(graph.to_dict(), separators=(",", ":"), sort_keys=True),
+            json.dumps(options.to_dict(), separators=(",", ":"), sort_keys=True),
+        )
+    )
+    return BillOfMaterials.from_dict(payload)
+
+
+def _prefix_mapping_pairs(
+    mappings: WindowsPrefixMappings | None,
+) -> list[tuple[str, str]]:
+    if mappings is None:
+        return []
+    items = mappings.items() if isinstance(mappings, Mapping) else mappings
+    return [(str(prefix), os.fsdecode(os.fspath(target))) for prefix, target in items]
+
+
 def _load_json(value: str) -> Mapping[str, Any]:
     decoded = json.loads(value)
     if not isinstance(decoded, dict):
@@ -298,6 +454,14 @@ def _apply_strict(result: ParseResult, strict: bool) -> ParseResult:
 def _apply_geometry_strict(result: GeometryResult, strict: bool) -> GeometryResult:
     if strict and result.status is not GeometryStatus.DECODED:
         raise GeometryError(result)
+    return result
+
+
+def _apply_evaluation_strict(
+    result: GeometryEvaluationResult, strict: bool
+) -> GeometryEvaluationResult:
+    if strict and result.status is not GeometryEvaluationStatus.EVALUATED:
+        raise GeometryEvaluationError(result)
     return result
 
 

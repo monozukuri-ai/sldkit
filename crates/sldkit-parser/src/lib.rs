@@ -1,12 +1,17 @@
 //! High-level path and byte entry points for `SolidWorks` parsing.
 
+mod bom;
 mod drawing;
 mod geometry;
 mod legacy_semantics;
 mod modern_semantics;
 mod project;
+mod units;
 
-pub use project::{ProjectScanOptions, WindowsPrefixMapping, scan_project_path};
+pub use bom::build_bill_of_materials;
+pub use project::{
+    ProjectScanOptions, WindowsPrefixMapping, index_project_path, scan_project_path,
+};
 
 use std::{
     fs::File,
@@ -22,7 +27,8 @@ use sldkit_container::{
 use sldkit_core::{
     BinaryResource, CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind,
     DrawingStructureResult, DrawingStructureStatus, Envelope, ExtractionMode, ExtractionResult,
-    ExtractionStatus, GeometryResult, GeometryStatus, InventoryResult, InventoryStatus,
+    ExtractionStatus, GeometryDocument, GeometryEvaluationOptions, GeometryEvaluationResult,
+    GeometryEvaluationStatus, GeometryResult, GeometryStatus, InventoryResult, InventoryStatus,
     ParseResult, ParseStatus, ProbeConfidence, ProbeResult, ProbeStatus, ResourceLimits,
     SourceDocument, SourceInfo, SourceInputKind, SourceValue, StreamExtraction, ValueOrigin,
 };
@@ -266,6 +272,55 @@ pub fn decode_geometry_path(path: impl AsRef<Path>, limits: &ResourceLimits) -> 
     }
 }
 
+/// Evaluate an already decoded geometry document: sampled edge polylines,
+/// bounding boxes, edge smoothness from adjacent face normals, and mesh
+/// fallbacks. Nothing in the input document is rewritten.
+#[must_use]
+pub fn evaluate_geometry(
+    document: &GeometryDocument,
+    options: &GeometryEvaluationOptions,
+) -> GeometryEvaluationResult {
+    geometry::evaluation::evaluate(document, options)
+}
+
+/// Decode modern Part geometry from bytes and evaluate it in one call. The
+/// decoder's diagnostics precede the evaluation diagnostics; a result without a
+/// geometry document is reported as `unavailable`.
+#[must_use]
+pub fn evaluate_geometry_bytes(
+    data: &[u8],
+    filename: Option<&str>,
+    limits: &ResourceLimits,
+    options: &GeometryEvaluationOptions,
+) -> GeometryEvaluationResult {
+    geometry::evaluation::evaluate_decoded(
+        geometry::decode(data, filename, SourceInputKind::Bytes, limits),
+        options,
+    )
+}
+
+/// Read a bounded path, decode its modern Part geometry, and evaluate it.
+#[must_use]
+pub fn evaluate_geometry_path(
+    path: impl AsRef<Path>,
+    limits: &ResourceLimits,
+    options: &GeometryEvaluationOptions,
+) -> GeometryEvaluationResult {
+    let path = path.as_ref();
+    let label = path.to_string_lossy().into_owned();
+    match read_path_bounded(path, limits) {
+        Ok(data) => geometry::evaluation::evaluate_decoded(
+            geometry::decode(&data, Some(&label), SourceInputKind::Path, limits),
+            options,
+        ),
+        Err(failure) => GeometryEvaluationResult {
+            status: GeometryEvaluationStatus::Rejected,
+            evaluation: None,
+            diagnostics: vec![failure.diagnostic],
+        },
+    }
+}
+
 /// Inventory modern Drawing source records without assigning renderable semantics.
 #[must_use]
 pub fn decode_drawing_structure_bytes(
@@ -418,11 +473,14 @@ fn recognized_modern(
         ),
         document_kind: facts.document_kind,
         internal_version: facts.internal_version,
+        units: units::derive_document_units(&facts.properties, &mut diagnostics),
         configurations: facts.configurations,
         properties: facts.properties,
         references: facts.references,
         preview: facts.preview,
         sheets: facts.sheets,
+        feature_records: facts.feature_records,
+        embedded_documents: facts.embedded_documents,
         unknown_records: facts.unknown_records,
     };
 
@@ -478,11 +536,14 @@ fn recognized_legacy(
         ),
         document_kind: facts.document_kind,
         internal_version: facts.internal_version,
+        units: units::derive_document_units(&facts.properties, &mut diagnostics),
         configurations: facts.configurations,
         properties: facts.properties,
         references: Vec::new(),
         preview: facts.preview,
         sheets: Vec::new(),
+        feature_records: Vec::new(),
+        embedded_documents: Vec::new(),
         unknown_records: facts.unknown_records,
     };
 
@@ -557,11 +618,14 @@ fn recognized_but_unsupported(
         envelope: SourceValue::new(envelope, ValueOrigin::Source, evidence),
         document_kind: document_kind_hint(filename),
         internal_version: None,
+        units: None,
         configurations: Vec::new(),
         properties: Vec::new(),
         references: Vec::new(),
         preview: None,
         sheets: Vec::new(),
+        feature_records: Vec::new(),
+        embedded_documents: Vec::new(),
         unknown_records: Vec::new(),
     };
 
@@ -709,6 +773,18 @@ fn display_path(path: &Path) -> String {
     PathBuf::from(path).to_string_lossy().into_owned()
 }
 
+/// A parse result for inputs whose bytes could not be obtained at all.
+pub(crate) const fn rejected_parse_result() -> ParseResult {
+    ParseResult {
+        status: ParseStatus::Rejected,
+        document: None,
+        inventory: None,
+        diagnostics: Vec::new(),
+        coverage: empty_coverage(0),
+        semantic_coverage: None,
+    }
+}
+
 fn rejected_probe(failure: ReadFailure) -> ProbeResult {
     ProbeResult {
         status: ProbeStatus::Rejected,
@@ -773,7 +849,7 @@ mod tests {
     const EMPTY_ZIP: &[u8] =
         b"PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
-    fn modern_file(streams: &[(&str, &[u8])]) -> Result<Vec<u8>, std::io::Error> {
+    pub(super) fn modern_file(streams: &[(&str, &[u8])]) -> Result<Vec<u8>, std::io::Error> {
         let mut output = b"SLDK\x00\x00\x00\x04".to_vec();
         for (name, payload) in streams {
             let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
@@ -1825,6 +1901,250 @@ mod tests {
                 .map(|coverage| coverage.malformed_streams),
             Some(1)
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod typed_fact_tests {
+    use sldkit_core::{
+        DocumentKind, EmbeddedDocumentRole, Envelope, ParseStatus, ResourceLimits, ValueOrigin,
+    };
+
+    use super::{parse_bytes, tests::modern_file};
+
+    #[test]
+    fn assembly_components_bounding_box_and_embedded_documents_are_typed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let part_model = br#"<root><swHeader><swFile id="0" swDocType="PART"/></swHeader><swModelList><swModel id="self" swFileRef="0" swConfigurationId="0"><swConfiguration swID="0" swName="Default"/></swModel></swModelList></root>"#;
+        let embedded = modern_file(&[("swXmlContents/Features", part_model)])?;
+        let assembly = br#"<root><swHeader><swFile id="0" swDocType="ASSEMBLY"/><swFile id="1" swDocType="PART" swPath="C:\Temp\swx1\VC~~\root\Part2^root.sldprt"/></swHeader><swModelList><swModel id="m0" swFileRef="0" swConfigurationId="0" swBoundingBox="-0.01 -0.02 0 0.03 0.04 0.05"><swConfiguration swID="0" swName="Default"/><swReference swModelRef="m1" swName="Part2^root" swSuppressed="NO" swIsVirtualComponent="YES" swFlexible="NO" swReferenceNumber="2" swID="25" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0.5 -0.25 0 1"/><swReference swModelRef="m1" swName="broken" swReferenceNumber="x" swTransform="1 0 0"/></swModel><swModel id="m1" swFileRef="1" swConfigurationName="Default"/></swModelList></root>"#;
+        let input = modern_file(&[
+            ("swXmlContents/COMPINSTANCETREE", assembly),
+            ("VirtualComp/Part2", &embedded),
+            ("VirtualComp/Broken", b"not a container"),
+        ])?;
+        let result = parse_bytes(&input, Some("root.SLDASM"), &ResourceLimits::desktop());
+        assert_eq!(result.status, ParseStatus::Partial);
+        let document = result.document.as_ref().ok_or("document missing")?;
+        let configuration = &document.configurations[0];
+        let bounding_box = configuration
+            .bounding_box
+            .as_ref()
+            .ok_or("bounding box missing")?;
+        assert_eq!(bounding_box.min, ["-0.01", "-0.02", "0"].map(str::to_owned));
+        assert_eq!(
+            bounding_box.max,
+            ["0.03", "0.04", "0.05"].map(str::to_owned)
+        );
+        assert_eq!(bounding_box.length_unit.origin, ValueOrigin::Inferred);
+        let component = &configuration.components[0];
+        assert_eq!(component.is_virtual.as_ref().map(|v| v.value), Some(true));
+        assert_eq!(component.is_flexible.as_ref().map(|v| v.value), Some(false));
+        assert_eq!(component.instance_number.as_ref().map(|v| v.value), Some(2));
+        assert_eq!(component.component_id.as_ref().map(|v| v.value), Some(25));
+        let transform = component
+            .raw_transform
+            .as_ref()
+            .ok_or("transform missing")?;
+        assert_eq!(transform.value.len(), 16);
+        assert_eq!(transform.value[12], "0.5");
+        assert_eq!(transform.origin, ValueOrigin::Source);
+        let broken = &configuration.components[1];
+        assert!(broken.instance_number.is_none());
+        assert!(broken.raw_transform.is_none());
+        assert!(broken.is_virtual.is_none());
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "modern.integer_attribute_malformed")
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "modern.component_transform_malformed")
+        );
+
+        assert_eq!(document.embedded_documents.len(), 2);
+        let part = document
+            .embedded_documents
+            .iter()
+            .find(|item| item.name == "Part2")
+            .ok_or("embedded part missing")?;
+        assert_eq!(part.role, EmbeddedDocumentRole::VirtualComponent);
+        assert_eq!(part.stream_path, "VirtualComp/Part2");
+        assert_eq!(part.envelope, Some(Envelope::ModernChunk));
+        assert_eq!(part.byte_len, Some(u64::try_from(embedded.len())?));
+        assert!(part.sha256.is_some());
+        let broken = document
+            .embedded_documents
+            .iter()
+            .find(|item| item.name == "Broken")
+            .ok_or("embedded broken missing")?;
+        assert!(broken.envelope.is_none());
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "modern.embedded_document_unrecognized")
+        );
+        let embedded_parse =
+            parse_bytes(&embedded, Some("Part2.SLDPRT"), &ResourceLimits::desktop());
+        assert_eq!(
+            embedded_parse
+                .document
+                .as_ref()
+                .map(|d| d.document_kind.value),
+            Some(DocumentKind::Part)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn part_material_units_and_feature_records_are_source_native()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let keywords = br#"<Keywords id="7" Name="Part2"><Configuration id="0" Name="Default" Type="ConfigurationManager" Material="Material &lt;not specified&gt;"/><Extrusion id="30" Name="Boss-Extrude1" Type="Boss-Extrude"><Dimension Name="D1">20</Dimension></Extrusion><HoleWizard id="37" Name="CBORE1" Dissectable="true" DissectableChildren="36,35" DissectableRoot="true"/><Sketch id="36" Name="Sketch2" Dissectable="true"><Dimension Name="Depth">20</Dimension><Dimension>&lt;MOD-DIAM&gt;1.78</Dimension></Sketch><Feature Name="no-id" Type="Plane"/></Keywords>"#;
+        let system = br#"<root><propertySection name="UserDefinedProperties"><property name="SW_UnitSystem" pid="21"><i4>5</i4></property><property name="SW_UnitsLinear" pid="22"><i4>0</i4></property><property name="SW_UnitsLinearDecimalPlaces" pid="24"><i4>2</i4></property><property name="SW_UnitsAngular" pid="33"><i4>3</i4></property><property name="SW_UnitsMassPropMass" pid="37"><i4>2</i4></property><property name="SW_UnitsMassPropVolume" pid="38"><i4>42</i4></property></propertySection></root>"#;
+        let input = modern_file(&[
+            ("swXmlContents/KeyWords", keywords),
+            ("docProps/ISolidWorksInformation.xml", system),
+        ])?;
+        let result = parse_bytes(&input, Some("part.SLDPRT"), &ResourceLimits::desktop());
+        let document = result.document.as_ref().ok_or("document missing")?;
+        let configuration = &document.configurations[0];
+        assert_eq!(
+            configuration.material.as_ref().map(|m| m.value.as_str()),
+            Some("Material <not specified>")
+        );
+        let units = document.units.as_ref().ok_or("units missing")?;
+        assert_eq!(
+            units
+                .unit_system
+                .as_ref()
+                .and_then(|u| u.name.as_ref())
+                .map(|n| n.value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            units
+                .length
+                .as_ref()
+                .and_then(|u| u.name.as_ref())
+                .map(|n| n.value.as_str()),
+            Some("millimeter")
+        );
+        assert_eq!(
+            units
+                .angle
+                .as_ref()
+                .and_then(|u| u.name.as_ref())
+                .map(|n| n.value.as_str()),
+            Some("radians")
+        );
+        assert_eq!(
+            units.length_decimal_places.as_ref().map(|v| v.value),
+            Some(2)
+        );
+        let volume = units.volume.as_ref().ok_or("volume missing")?;
+        assert_eq!(volume.code.value, 42);
+        assert!(volume.name.is_none());
+        assert!(units.dual_length.is_none());
+
+        let tags = document
+            .feature_records
+            .iter()
+            .map(|record| (record.source_tag.as_str(), record.source_id.as_deref()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tags,
+            vec![
+                ("Extrusion", Some("30")),
+                ("HoleWizard", Some("37")),
+                ("Sketch", Some("36")),
+            ]
+        );
+        let hole = &document.feature_records[1];
+        assert_eq!(hole.dissectable, Some(true));
+        assert_eq!(hole.dissectable_root, Some(true));
+        assert_eq!(
+            hole.dissectable_children,
+            vec!["36".to_owned(), "35".to_owned()]
+        );
+        let sketch = &document.feature_records[2];
+        assert_eq!(sketch.dimensions.len(), 2);
+        assert_eq!(sketch.dimensions[0].name.as_deref(), Some("Depth"));
+        assert_eq!(sketch.dimensions[1].name, None);
+        assert_eq!(sketch.dimensions[1].raw_value, "<MOD-DIAM>1.78");
+        assert_eq!(document.feature_records[0].dimensions[0].raw_value, "20");
+        Ok(())
+    }
+
+    #[test]
+    fn drawing_sheet_metadata_and_format_data_are_typed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let keywords = br#"<Keywords><Sheet id="4" Name="Sheet1" Type="Sheet"><CustomPropertyView id="" Name="Drawing View1">Default</CustomPropertyView><PaperSize id="" Description="8">A3</PaperSize><ScaleDenominator id="">2.000000</ScaleDenominator><ScaleNumerator id="">1.000000</ScaleNumerator><TemplateName id="">C:\templates\a3.slddrt</TemplateName><View id="2" Name="Drawing View1" Description="Default">part.sldprt</View></Sheet><Sheet id="5" Name="Sheet2" Type="Sheet"><PaperSize id="" Description="x">USER_SIZE</PaperSize></Sheet></Keywords>"#;
+        let system = br#"<root><propertySection name="UserDefinedProperties"><property name="SW-All Sheet Format Data" pid="9"><lpstr>Sheet1@8.000000@0.420000@0.297000@1.000000@2.000000@0.000000@C:\templates\a3.slddrt@8.000000@1.000000@Sheet2@12.000000@0.100000@0.200000@1.000000@1.000000@0.000000@*.drt@12.000000@1.000000@@</lpstr></property></propertySection></root>"#;
+        let input = modern_file(&[
+            ("swXmlContents/KeyWords", keywords),
+            ("docProps/ISolidWorksInformation.xml", system),
+        ])?;
+        let result = parse_bytes(&input, Some("drawing.SLDDRW"), &ResourceLimits::desktop());
+        let document = result.document.as_ref().ok_or("document missing")?;
+        assert_eq!(document.document_kind.value, DocumentKind::Drawing);
+        assert_eq!(document.sheets.len(), 2);
+        let sheet = &document.sheets[0];
+        assert_eq!(
+            sheet.paper_size.as_ref().map(|v| v.value.as_str()),
+            Some("A3")
+        );
+        assert_eq!(sheet.paper_size_code.as_ref().map(|v| v.value), Some(8));
+        let paper_name = sheet.paper_size_name.as_ref().ok_or("paper name missing")?;
+        assert_eq!(paper_name.value, "a3");
+        assert_eq!(paper_name.origin, ValueOrigin::Inferred);
+        assert_eq!(
+            sheet.scale_numerator.as_ref().map(|v| v.value.as_str()),
+            Some("1.000000")
+        );
+        assert_eq!(
+            sheet.scale_denominator.as_ref().map(|v| v.value.as_str()),
+            Some("2.000000")
+        );
+        assert_eq!(
+            sheet.sheet_format_path.as_ref().map(|v| v.value.as_str()),
+            Some(r"C:\templates\a3.slddrt")
+        );
+        assert_eq!(
+            sheet
+                .custom_property_view
+                .as_ref()
+                .map(|v| v.value.as_str()),
+            Some("Drawing View1")
+        );
+        let width = sheet.width.as_ref().ok_or("width missing")?;
+        assert_eq!(width.value, "0.420000");
+        assert_eq!(width.origin, ValueOrigin::Inferred);
+        assert_eq!(
+            sheet.height.as_ref().map(|v| v.value.as_str()),
+            Some("0.297000")
+        );
+        let format_data = sheet.format_data.as_ref().ok_or("format data missing")?;
+        assert_eq!(format_data.fields.len(), 10);
+        assert_eq!(format_data.fields[8], "8.000000");
+        let second = &document.sheets[1];
+        assert!(second.paper_size_code.is_none());
+        assert_eq!(
+            second.width.as_ref().map(|v| v.value.as_str()),
+            Some("0.100000")
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "modern.drawing_paper_size_code_malformed")
+        );
+        assert!(document.feature_records.is_empty());
         Ok(())
     }
 }

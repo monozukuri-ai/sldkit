@@ -373,6 +373,8 @@ fn finish_configurations(builder: &mut Builder) -> Vec<Configuration> {
             parent_index: candidate.parent_index.clone(),
             preview: previews.get(&index).cloned(),
             mass_properties: None,
+            material: None,
+            bounding_box: None,
             components: Vec::new(),
         })
         .collect()

@@ -69,6 +69,8 @@ include = [
     { path = "docs/README.md", format = "sdist" },
     { path = "docs/architecture.md", format = "sdist" },
     { path = "docs/compatibility.md", format = "sdist" },
+    { path = "docs/document-facts.md", format = "sdist" },
+    { path = "docs/geometry-evaluation.md", format = "sdist" },
     { path = "docs/development/README.md", format = "sdist" },
     { path = "docs/development/assembly-validation.md", format = "sdist" },
     { path = "docs/development/drawing-validation.md", format = "sdist" },

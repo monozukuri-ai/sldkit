@@ -12,12 +12,15 @@ as a typed Python package through PyO3.
 | Stored and decoded stream extraction | Supported where the container decoder recognizes the encoding |
 | Exact binary-resource extraction | Revalidates parser-produced path, decoded range, and SHA-256 before returning preview bytes |
 | Modern metadata, properties, configurations, and references | Partial, source-faithful profile |
+| Typed component flags, unit settings, material labels, feature records, sheet facts, embedded virtual components | Source tokens plus labelled inferences |
 | Modern `.SLDPRT` B-Rep and tessellation | Explicit partial profile with provenance and loss records |
 | Modern `.SLDDRW` source structure | Exact XML record inventory plus unframed Drawing carrier candidates; no render semantics |
-| Directory project graph | Bounded and deterministic for decoded references |
+| Kernel-free geometry evaluation | Sampled edge polylines, bounds, edge smoothness, and mesh quantities with explicit withheld states |
+| Directory project graph | Bounded and deterministic for decoded references, including embedded virtual components |
+| Project index and bill of materials | Reverse references across a project and occurrence expansion with quantities |
 | Legacy OLE2/CFB metadata, properties, configurations, and previews | Partial, bounded profile for observed layouts |
 | ZIP/OPC document semantics | Unsupported |
-| Feature history, mates, and occurrence transforms | Unsupported |
+| Feature history, mates, and occurrence transforms | Unsupported; raw transform tokens are retained as evidence |
 | Drawing entities, dimensions, and view transforms | Unsupported |
 | Offline HTML viewer | Recovered Part meshes, saved previews, and parse diagnostics |
 
@@ -80,7 +83,26 @@ graph = sldkit.scan_project(
 )
 for edge in graph.edges:
     print(edge.stored_path, edge.resolution_status, edge.resolved_path)
+
+bom = sldkit.build_bom(graph)
+for item in bom.part_items():
+    print(item.display_name, item.key.configuration, item.quantity)
+
+index = sldkit.index_project("project")
+part = index.node_by_path("parts/bracket.SLDPRT")
+if part is not None:
+    for drawing in index.referencing_nodes(part.id, kind=sldkit.ReferenceKind.DRAWING_VIEW):
+        print(drawing.path)
+
+evaluation = sldkit.evaluate_geometry_file("part.SLDPRT", chord_tolerance_mm=0.05)
+if evaluation.evaluation is not None:
+    print(evaluation.evaluation.bounding_box, evaluation.evaluation.summary)
 ```
+
+Typed component flags, document units, material labels, feature records, and
+sheet facts are described in [document facts](docs/document-facts.md);
+[geometry evaluation](docs/geometry-evaluation.md) and
+[project scanning](docs/project-scanning.md) cover the derived APIs.
 
 Use `strict=True` with `parse_file` or `parse_bytes` when an unsupported or
 partial result must raise `sldkit.ParseError`. Geometry decoding has the same
@@ -101,6 +123,9 @@ sldkit scan project/top.SLDASM --project-root project --summary
 sldkit-rs scan project/top.SLDASM --project-root project --summary
 sldkit drawing drawing.SLDDRW --limits service
 sldkit-rs drawing drawing.SLDDRW --limits service
+sldkit evaluate part.SLDPRT --chord-tolerance 0.05
+sldkit index project --summary
+sldkit bom project/top.SLDASM --project-root project --configuration Default --items-only
 uv run python scripts/compare_drawing_structures.py baseline.SLDDRW variant.SLDDRW
 ```
 

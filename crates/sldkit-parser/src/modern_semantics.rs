@@ -3,14 +3,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use crc32fast::Hasher as Crc32;
 use roxmltree::{Document, Node, ParsingOptions};
 use sha2::{Digest, Sha256};
-use sldkit_container::decode_selected_bytes;
+use sldkit_container::{decode_selected_bytes, probe_bytes as probe_container_bytes};
 use sldkit_core::{
     AssemblyComponent, BinaryResource, BinaryResourceKind, Configuration, ContainerInventory,
     CustomProperty, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind,
-    DocumentReference, DrawingSheet, DrawingView, InventoryEntry, InventoryEntryState,
-    MassProperties, PropertyKind, PropertyScope, PropertyValueState, RecordOffsetBasis,
-    ReferenceKind, ResourceLimits, SemanticCoverage, SourceValue, UnknownRecord, ValueOrigin,
+    DocumentReference, DrawingSheet, DrawingSheetFormatData, DrawingView, EmbeddedDocument,
+    EmbeddedDocumentRole, FeatureDimension, FeatureRecord, InventoryEntry, InventoryEntryState,
+    MassProperties, ModelBoundingBox, ProbeStatus, PropertyKind, PropertyScope, PropertyValueState,
+    RecordOffsetBasis, ReferenceKind, ResourceLimits, SemanticCoverage, SourceValue, UnknownRecord,
+    ValueOrigin,
 };
+
+const VIRTUAL_COMPONENT_PREFIX: &str = "VirtualComp/";
+const SHEET_FORMAT_DATA_PROPERTY: &str = "SW-All Sheet Format Data";
+const SHEET_FORMAT_DATA_FIELDS: usize = 10;
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -22,6 +28,8 @@ pub(crate) struct ModernFacts {
     pub references: Vec<DocumentReference>,
     pub preview: Option<BinaryResource>,
     pub sheets: Vec<DrawingSheet>,
+    pub feature_records: Vec<FeatureRecord>,
+    pub embedded_documents: Vec<EmbeddedDocument>,
     pub unknown_records: Vec<UnknownRecord>,
     pub diagnostics: Vec<Diagnostic>,
     pub semantic_coverage: SemanticCoverage,
@@ -52,12 +60,16 @@ struct Builder {
     configs: BTreeMap<i64, ConfigCandidate>,
     properties: Vec<CustomProperty>,
     components: BTreeMap<i64, Vec<AssemblyComponent>>,
+    materials: BTreeMap<i64, Vec<SourceValue<String>>>,
+    bounding_boxes: BTreeMap<i64, Vec<ModelBoundingBox>>,
     references: Vec<DocumentReference>,
     preview: Option<BinaryResource>,
     config_previews: BTreeMap<i64, BinaryResource>,
     sheets: Vec<DrawingSheet>,
     sheet_names: Vec<SourceValue<String>>,
     sheet_previews: BTreeMap<usize, BinaryResource>,
+    feature_records: Vec<FeatureRecord>,
+    embedded_documents: Vec<EmbeddedDocument>,
     diagnostics: Vec<Diagnostic>,
     classes: BTreeMap<String, SemanticClass>,
     rejected: bool,
@@ -74,12 +86,16 @@ pub(crate) fn decode(
         .iter()
         .filter(|entry| {
             entry.state == InventoryEntryState::Decoded
-                && entry.path.as_deref().is_some_and(is_selected_stream)
+                && entry
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| is_selected_stream(path) || is_embedded_document(path))
         })
         .map(|entry| entry.id.clone())
         .collect::<BTreeSet<_>>();
     let decoded = decode_selected_bytes(data, &wanted, limits);
     let mut builder = Builder::default();
+    collect_embedded_documents(inventory, &decoded.streams, limits, &mut builder);
 
     collect_version_candidates(inventory, &mut builder);
     collect_config_path_candidates(inventory, &mut builder);
@@ -128,10 +144,21 @@ pub(crate) fn decode(
         &mut builder.config_previews,
         &mut builder.components,
     );
+    attach_configuration_facts(
+        &mut configurations,
+        &mut builder.materials,
+        &mut builder.bounding_boxes,
+        &mut builder.diagnostics,
+    );
     attach_sheet_previews(
         &mut builder.sheets,
         &builder.sheet_names,
         &mut builder.sheet_previews,
+    );
+    attach_sheet_format_data(
+        &mut builder.sheets,
+        &builder.properties,
+        &mut builder.diagnostics,
     );
     let (semantic_coverage, unknown_records) = semantic_accounting(inventory, &builder.classes);
 
@@ -143,10 +170,64 @@ pub(crate) fn decode(
         references: builder.references,
         preview: builder.preview,
         sheets: builder.sheets,
+        feature_records: builder.feature_records,
+        embedded_documents: builder.embedded_documents,
         unknown_records,
         diagnostics: builder.diagnostics,
         semantic_coverage,
         rejected: builder.rejected,
+    }
+}
+
+fn is_embedded_document(path: &str) -> bool {
+    path.strip_prefix(VIRTUAL_COMPONENT_PREFIX)
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
+/// Record complete documents stored inside this container without decoding
+/// their semantics. The caller can extract and parse them as separate inputs.
+fn collect_embedded_documents(
+    inventory: &ContainerInventory,
+    streams: &BTreeMap<String, Vec<u8>>,
+    limits: &ResourceLimits,
+    builder: &mut Builder,
+) {
+    for entry in &inventory.entries {
+        let Some(path) = entry.path.as_deref() else {
+            continue;
+        };
+        if entry.state != InventoryEntryState::Decoded || !is_embedded_document(path) {
+            continue;
+        }
+        let Some(name) = path.strip_prefix(VIRTUAL_COMPONENT_PREFIX) else {
+            continue;
+        };
+        let envelope = streams.get(&entry.id).and_then(|bytes| {
+            let probe = probe_container_bytes(bytes, limits);
+            (probe.status == ProbeStatus::Recognized).then_some(probe.envelope)
+        });
+        if envelope.is_none() {
+            builder.diagnostics.push(
+                Diagnostic::new(
+                    "modern.embedded_document_unrecognized",
+                    DiagnosticSeverity::Warning,
+                    DiagnosticKind::Unsupported,
+                    "an embedded virtual-component stream is not a recognized container",
+                )
+                .in_stream(path)
+                .with_detail("entry_id", &entry.id),
+            );
+        }
+        builder.mark(&entry.id, SemanticClass::PartiallyInterpreted);
+        builder.embedded_documents.push(EmbeddedDocument {
+            role: EmbeddedDocumentRole::VirtualComponent,
+            name: name.to_owned(),
+            entry_id: entry.id.clone(),
+            stream_path: path.to_owned(),
+            byte_len: entry.decoded_size,
+            sha256: entry.decoded_sha256.clone(),
+            envelope,
+        });
     }
 }
 
@@ -936,67 +1017,12 @@ fn decode_keywords_xml(
     };
     collect_xml_configurations(entry, &document, builder);
     let root = document.root_element();
-    let mut sheets = Vec::new();
-    for sheet_node in root.children().filter(|node| node.has_tag_name("Sheet")) {
-        let source_type = sheet_node.attribute("Type");
-        let has_direct_view = sheet_node.children().any(|node| node.has_tag_name("View"));
-        if source_type != Some("Sheet") && !has_direct_view {
-            continue;
-        }
-        if source_type != Some("Sheet") {
-            let mut diagnostic = Diagnostic::new(
-                "modern.drawing_sheet_type_inferred_from_views",
-                DiagnosticSeverity::Info,
-                DiagnosticKind::Inferred,
-                "drawing sheet semantics were inferred from direct View children",
-            )
-            .in_stream(entry.path.as_deref().unwrap_or_default());
-            if let Some(source_type) = source_type {
-                diagnostic = diagnostic.with_detail("source_type", source_type);
-            }
-            builder.diagnostics.push(diagnostic);
-        }
-        let sheet_name = source_attribute(entry, sheet_node, "Name", "sheet");
-        let source_id = sheet_node.attribute("id").map(str::to_owned);
-        let mut views = Vec::new();
-        for view_node in sheet_node
-            .children()
-            .filter(|node| node.has_tag_name("View"))
-        {
-            let name = source_attribute(entry, view_node, "Name", "drawing_view");
-            let referenced_configuration =
-                source_attribute(entry, view_node, "Description", "drawing_view");
-            let referenced_document = view_node.text().map(str::trim).map(|value| {
-                SourceValue::new(
-                    value.to_owned(),
-                    ValueOrigin::Source,
-                    evidence(entry, "drawing_view:text"),
-                )
-            });
-            let source_view_id = view_node.attribute("id").map(str::to_owned);
-            builder.references.push(DocumentReference {
-                kind: ReferenceKind::DrawingView,
-                source_name: name.clone(),
-                stored_path: referenced_document.clone(),
-                resolved_path: None,
-                document_kind: None,
-                configuration: referenced_configuration.clone(),
-                configuration_index: None,
-            });
-            views.push(DrawingView {
-                source_id: source_view_id,
-                name,
-                referenced_document,
-                referenced_configuration,
-            });
-        }
-        sheets.push(DrawingSheet {
-            source_id,
-            name: sheet_name,
-            preview: None,
-            views,
-        });
-    }
+    collect_feature_records(entry, root, builder);
+    let sheets = root
+        .children()
+        .filter(|node| node.has_tag_name("Sheet"))
+        .filter_map(|sheet_node| decode_sheet_node(entry, sheet_node, builder))
+        .collect::<Vec<_>>();
     if !sheets.is_empty() {
         builder.kind_candidates.push(SourceValue::new(
             DocumentKind::Drawing,
@@ -1006,6 +1032,114 @@ fn decode_keywords_xml(
         builder.sheets = sheets;
     }
     builder.mark(&entry.id, SemanticClass::PartiallyInterpreted);
+}
+
+fn decode_sheet_node(
+    entry: &InventoryEntry,
+    sheet_node: Node<'_, '_>,
+    builder: &mut Builder,
+) -> Option<DrawingSheet> {
+    let source_type = sheet_node.attribute("Type");
+    let has_direct_view = sheet_node.children().any(|node| node.has_tag_name("View"));
+    if source_type != Some("Sheet") && !has_direct_view {
+        return None;
+    }
+    if source_type != Some("Sheet") {
+        let mut diagnostic = Diagnostic::new(
+            "modern.drawing_sheet_type_inferred_from_views",
+            DiagnosticSeverity::Info,
+            DiagnosticKind::Inferred,
+            "drawing sheet semantics were inferred from direct View children",
+        )
+        .in_stream(entry.path.as_deref().unwrap_or_default());
+        if let Some(source_type) = source_type {
+            diagnostic = diagnostic.with_detail("source_type", source_type);
+        }
+        builder.diagnostics.push(diagnostic);
+    }
+    let sheet_name = source_attribute(entry, sheet_node, "Name", "sheet");
+    let source_id = sheet_node.attribute("id").map(str::to_owned);
+    let mut views = Vec::new();
+    for view_node in sheet_node
+        .children()
+        .filter(|node| node.has_tag_name("View"))
+    {
+        let name = source_attribute(entry, view_node, "Name", "drawing_view");
+        let referenced_configuration =
+            source_attribute(entry, view_node, "Description", "drawing_view");
+        let referenced_document = view_node.text().map(str::trim).map(|value| {
+            SourceValue::new(
+                value.to_owned(),
+                ValueOrigin::Source,
+                evidence(entry, "drawing_view:text"),
+            )
+        });
+        let source_view_id = view_node.attribute("id").map(str::to_owned);
+        builder.references.push(DocumentReference {
+            kind: ReferenceKind::DrawingView,
+            source_name: name.clone(),
+            stored_path: referenced_document.clone(),
+            resolved_path: None,
+            document_kind: None,
+            configuration: referenced_configuration.clone(),
+            configuration_index: None,
+        });
+        views.push(DrawingView {
+            source_id: source_view_id,
+            name,
+            referenced_document,
+            referenced_configuration,
+        });
+    }
+    let paper_size_code = sheet_paper_size_code(entry, sheet_node, builder);
+    let paper_size_name = paper_size_code.as_ref().and_then(|code| {
+        paper_size_name(code.value).map(|name| {
+            let mut paper_evidence = code.evidence.clone();
+            paper_evidence.push("enumeration.swDwgPaperSizes_e".to_owned());
+            SourceValue::new(name.to_owned(), ValueOrigin::Inferred, paper_evidence)
+        })
+    });
+    Some(DrawingSheet {
+        source_id,
+        name: sheet_name,
+        preview: None,
+        paper_size: sheet_child_text(entry, sheet_node, "PaperSize"),
+        paper_size_code,
+        paper_size_name,
+        scale_numerator: sheet_child_text(entry, sheet_node, "ScaleNumerator"),
+        scale_denominator: sheet_child_text(entry, sheet_node, "ScaleDenominator"),
+        sheet_format_path: sheet_child_text(entry, sheet_node, "TemplateName"),
+        custom_property_view: sheet_child(sheet_node, "CustomPropertyView")
+            .and_then(|node| source_attribute(entry, node, "Name", "Sheet/CustomPropertyView")),
+        width: None,
+        height: None,
+        format_data: None,
+        views,
+    })
+}
+
+fn sheet_paper_size_code(
+    entry: &InventoryEntry,
+    sheet_node: Node<'_, '_>,
+    builder: &mut Builder,
+) -> Option<SourceValue<i64>> {
+    let raw = sheet_child(sheet_node, "PaperSize")?.attribute("Description")?;
+    if let Ok(code) = raw.parse::<i64>() {
+        return Some(SourceValue::new(
+            code,
+            ValueOrigin::Source,
+            evidence(entry, "Sheet/PaperSize@Description"),
+        ));
+    }
+    builder.diagnostics.push(
+        xml_diagnostic(
+            entry,
+            "modern.drawing_paper_size_code_malformed",
+            "drawing sheet paper-size code is not a signed decimal integer",
+        )
+        .with_detail("raw_value", raw),
+    );
+    None
 }
 
 fn parse_xml<'a>(
@@ -1188,12 +1322,22 @@ fn collect_xml_configurations(
                 }
             }
         }
+        let material = node.attribute("Material").map(|value| {
+            SourceValue::new(
+                value.to_owned(),
+                ValueOrigin::Source,
+                evidence(entry, "Configuration@Material"),
+            )
+        });
         let candidate = builder.ensure_config(index, evidence(entry, index_attribute));
         if let Some(name) = name {
             candidate.names.push(name);
         }
         candidate.parent_names.extend(parent_names);
         candidate.parent_indices.extend(parent_indices);
+        if let Some(material) = material {
+            builder.materials.entry(index).or_default().push(material);
+        }
     }
 }
 
@@ -1345,6 +1489,13 @@ fn collect_components(entry: &InventoryEntry, document: &Document<'_>, builder: 
                 ),
             );
         }
+        if let Some(bounding_box) = model_bounding_box(entry, model, builder) {
+            builder
+                .bounding_boxes
+                .entry(configuration_index)
+                .or_default()
+                .push(bounding_box);
+        }
         if !model
             .children()
             .any(|node| node.has_tag_name("swReference"))
@@ -1417,6 +1568,21 @@ fn collect_components(entry: &InventoryEntry, document: &Document<'_>, builder: 
                     "swExcludeFromBOM",
                     builder,
                 ),
+                is_virtual: source_bool_attribute(
+                    entry,
+                    reference,
+                    "swIsVirtualComponent",
+                    builder,
+                ),
+                is_flexible: source_bool_attribute(entry, reference, "swFlexible", builder),
+                instance_number: source_integer_attribute(
+                    entry,
+                    reference,
+                    "swReferenceNumber",
+                    builder,
+                ),
+                component_id: source_integer_attribute(entry, reference, "swID", builder),
+                raw_transform: source_transform_attribute(entry, reference, builder),
                 source_model_ref: model_ref,
                 raw_attributes: reference
                     .attributes()
@@ -2139,6 +2305,8 @@ impl Builder {
                 parent_index,
                 preview: None,
                 mass_properties: self.mass_properties(index),
+                material: None,
+                bounding_box: None,
                 components: Vec::new(),
             });
         }
@@ -2274,6 +2442,278 @@ fn attach_configuration_resources(
     }
 }
 
+fn attach_configuration_facts(
+    configurations: &mut [Configuration],
+    materials: &mut BTreeMap<i64, Vec<SourceValue<String>>>,
+    bounding_boxes: &mut BTreeMap<i64, Vec<ModelBoundingBox>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for configuration in configurations {
+        let index = configuration.index.value;
+        let merged = merge_sourced_values(materials.remove(&index).unwrap_or_default());
+        if merged.len() > 1 {
+            diagnostics.push(
+                Diagnostic::new(
+                    "modern.configuration_material_conflict",
+                    DiagnosticSeverity::Warning,
+                    DiagnosticKind::Preserved,
+                    "configuration index has multiple distinct source material labels",
+                )
+                .with_detail("configuration_index", index.to_string())
+                .with_detail(
+                    "materials",
+                    merged
+                        .iter()
+                        .map(|value| value.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                ),
+            );
+        } else {
+            configuration.material = merged.into_iter().next();
+        }
+        let mut boxes = bounding_boxes.remove(&index).unwrap_or_default();
+        boxes.dedup_by(|left, right| left.raw_value.value == right.raw_value.value);
+        if boxes.len() > 1 {
+            diagnostics.push(
+                Diagnostic::new(
+                    "modern.configuration_bounding_box_conflict",
+                    DiagnosticSeverity::Warning,
+                    DiagnosticKind::Preserved,
+                    "configuration index has multiple distinct saved bounding boxes",
+                )
+                .with_detail("configuration_index", index.to_string()),
+            );
+        } else {
+            configuration.bounding_box = boxes.into_iter().next();
+        }
+    }
+}
+
+fn model_bounding_box(
+    entry: &InventoryEntry,
+    model: Node<'_, '_>,
+    builder: &mut Builder,
+) -> Option<ModelBoundingBox> {
+    let raw = model.attribute("swBoundingBox")?;
+    let tokens = raw.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() != 6 || !tokens.iter().all(|token| is_finite_decimal(token)) {
+        builder.diagnostics.push(
+            xml_diagnostic(
+                entry,
+                "modern.bounding_box_malformed",
+                "saved bounding box does not contain six finite decimal tokens",
+            )
+            .with_detail("raw_value", raw),
+        );
+        return None;
+    }
+    let token = |index: usize| tokens.get(index).map_or(String::new(), |t| (*t).to_owned());
+    Some(ModelBoundingBox {
+        raw_value: SourceValue::new(
+            raw.to_owned(),
+            ValueOrigin::Source,
+            evidence(entry, "swModel@swBoundingBox"),
+        ),
+        min: [token(0), token(1), token(2)],
+        max: [token(3), token(4), token(5)],
+        length_unit: SourceValue::new(
+            "meter".to_owned(),
+            ValueOrigin::Inferred,
+            vec!["cross_check.decoded_part_geometry_extents".to_owned()],
+        ),
+    })
+}
+
+/// Inventory the saved `FeatureManager` items of a Part or Assembly.
+///
+/// Only direct children with a source `id` are recorded; configurations,
+/// sheets, views, and layers have their own typed projections.
+fn collect_feature_records(entry: &InventoryEntry, root: Node<'_, '_>, builder: &mut Builder) {
+    for node in root.children().filter(Node::is_element) {
+        let tag = node.tag_name().name();
+        if matches!(tag, "Configuration" | "Sheet" | "View" | "Layer")
+            || node.attribute("id").is_none()
+        {
+            continue;
+        }
+        let dimensions = node
+            .children()
+            .filter(|child| child.has_tag_name("Dimension"))
+            .map(|child| FeatureDimension {
+                name: child.attribute("Name").map(str::to_owned),
+                raw_value: child.text().unwrap_or_default().to_owned(),
+            })
+            .collect();
+        builder.feature_records.push(FeatureRecord {
+            source_tag: tag.to_owned(),
+            source_id: node.attribute("id").map(str::to_owned),
+            name: source_attribute(entry, node, "Name", tag),
+            source_type: node.attribute("Type").map(str::to_owned),
+            dissectable: xml_bool(node.attribute("Dissectable")),
+            dissectable_root: xml_bool(node.attribute("DissectableRoot")),
+            dissectable_children: node
+                .attribute("DissectableChildren")
+                .map(|value| {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            dimensions,
+            raw_attributes: node
+                .attributes()
+                .map(|attribute| (attribute.name().to_owned(), attribute.value().to_owned()))
+                .collect(),
+            stream_path: entry.path.clone().unwrap_or_default(),
+        });
+    }
+}
+
+fn xml_bool(value: Option<&str>) -> Option<bool> {
+    match value?.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" => Some(true),
+        "false" | "no" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn sheet_child<'a, 'input>(sheet: Node<'a, 'input>, tag: &str) -> Option<Node<'a, 'input>> {
+    sheet.children().find(|node| node.has_tag_name(tag))
+}
+
+fn sheet_child_text(
+    entry: &InventoryEntry,
+    sheet: Node<'_, '_>,
+    tag: &str,
+) -> Option<SourceValue<String>> {
+    let node = sheet_child(sheet, tag)?;
+    let text = node.text()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(SourceValue::new(
+        text.to_owned(),
+        ValueOrigin::Source,
+        evidence(entry, &format!("Sheet/{tag}:text")),
+    ))
+}
+
+/// `swDwgPaperSizes_e` names; the user-defined and A3/A1 codes were
+/// cross-checked against saved sheet dimensions in controlled Drawings.
+const fn paper_size_name(code: i64) -> Option<&'static str> {
+    Some(match code {
+        0 => "a_size",
+        1 => "a_size_vertical",
+        2 => "b_size",
+        3 => "c_size",
+        4 => "d_size",
+        5 => "e_size",
+        6 => "a4",
+        7 => "a4_vertical",
+        8 => "a3",
+        9 => "a2",
+        10 => "a1",
+        11 => "a0",
+        12 => "user_defined",
+        _ => return None,
+    })
+}
+
+/// Attach sheet width/height from the `SW-All Sheet Format Data` property.
+///
+/// Each sheet record has ten `@`-separated fields. Observed roles are: name,
+/// template paper-size code, width, height, scale numerator, scale
+/// denominator, an unassigned decimal, sheet-format path, sheet paper-size
+/// code, and an unassigned decimal. Unexpected layouts are preserved whole.
+fn attach_sheet_format_data(
+    sheets: &mut [DrawingSheet],
+    properties: &[CustomProperty],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(property) = properties.iter().find(|property| {
+        property.kind == PropertyKind::System && property.name.value == SHEET_FORMAT_DATA_PROPERTY
+    }) else {
+        return;
+    };
+    let Some(raw) = property.raw_value.as_ref() else {
+        return;
+    };
+    let tokens = raw.value.split('@').collect::<Vec<_>>();
+    let record_tokens = tokens.len().saturating_sub(2);
+    let well_formed = tokens.len() >= SHEET_FORMAT_DATA_FIELDS + 2
+        && record_tokens % SHEET_FORMAT_DATA_FIELDS == 0
+        && tokens.iter().rev().take(2).all(|token| token.is_empty());
+    if !well_formed {
+        diagnostics.push(
+            Diagnostic::new(
+                "modern.drawing_sheet_format_data_unrecognized",
+                DiagnosticSeverity::Info,
+                DiagnosticKind::Preserved,
+                "sheet format data does not use the observed ten-field record layout",
+            )
+            .in_stream(&property.stream_path)
+            .with_detail("token_count", tokens.len().to_string()),
+        );
+        return;
+    }
+    for record in tokens[..record_tokens].chunks(SHEET_FORMAT_DATA_FIELDS) {
+        let fields = record
+            .iter()
+            .map(|field| (*field).to_owned())
+            .collect::<Vec<_>>();
+        let Some(sheet) = sheets.iter_mut().find(|sheet| {
+            sheet.format_data.is_none()
+                && sheet
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| name.value == fields[0])
+        }) else {
+            diagnostics.push(
+                Diagnostic::new(
+                    "modern.drawing_sheet_format_data_unmatched",
+                    DiagnosticSeverity::Info,
+                    DiagnosticKind::Preserved,
+                    "a sheet format data record does not match a decoded sheet name",
+                )
+                .in_stream(&property.stream_path),
+            );
+            continue;
+        };
+        let field_value = |index: usize, selector: &str| {
+            fields
+                .get(index)
+                .filter(|value| is_finite_decimal(value))
+                .map(|value| {
+                    SourceValue::new(
+                        value.clone(),
+                        ValueOrigin::Inferred,
+                        vec![
+                            format!(
+                                "{}#property:{SHEET_FORMAT_DATA_PROPERTY}:field:{index}",
+                                raw.evidence.join("|")
+                            ),
+                            selector.to_owned(),
+                        ],
+                    )
+                })
+        };
+        sheet.width = field_value(2, "inference.sheet_format_data_width_metres");
+        sheet.height = field_value(3, "inference.sheet_format_data_height_metres");
+        sheet.format_data = Some(DrawingSheetFormatData {
+            raw_value: SourceValue::new(
+                fields.join("@"),
+                ValueOrigin::Source,
+                raw.evidence.clone(),
+            ),
+            fields,
+        });
+    }
+}
+
 fn attach_sheet_previews(
     sheets: &mut Vec<DrawingSheet>,
     names: &[SourceValue<String>],
@@ -2285,6 +2725,16 @@ fn attach_sheet_previews(
                 source_id: None,
                 name: Some(name.clone()),
                 preview: previews.remove(&index),
+                paper_size: None,
+                paper_size_code: None,
+                paper_size_name: None,
+                scale_numerator: None,
+                scale_denominator: None,
+                sheet_format_path: None,
+                custom_property_view: None,
+                width: None,
+                height: None,
+                format_data: None,
                 views: Vec::new(),
             });
         }
@@ -2413,6 +2863,62 @@ fn source_bool_attribute(
         value,
         ValueOrigin::Source,
         evidence(entry, &format!("swReference@{attribute}")),
+    ))
+}
+
+fn source_integer_attribute(
+    entry: &InventoryEntry,
+    node: Node<'_, '_>,
+    attribute: &str,
+    builder: &mut Builder,
+) -> Option<SourceValue<i64>> {
+    let raw = node.attribute(attribute)?;
+    if let Ok(value) = raw.trim().parse::<i64>() {
+        return Some(SourceValue::new(
+            value,
+            ValueOrigin::Source,
+            evidence(entry, &format!("swReference@{attribute}")),
+        ));
+    }
+    builder.diagnostics.push(
+        Diagnostic::new(
+            "modern.integer_attribute_malformed",
+            DiagnosticSeverity::Warning,
+            DiagnosticKind::Preserved,
+            "integer attribute is not a signed decimal integer",
+        )
+        .in_stream(entry.path.clone().unwrap_or_default())
+        .with_detail("attribute", attribute)
+        .with_detail("raw_value", raw),
+    );
+    None
+}
+
+/// Retain the 16 `swTransform` tokens without assigning matrix semantics.
+fn source_transform_attribute(
+    entry: &InventoryEntry,
+    node: Node<'_, '_>,
+    builder: &mut Builder,
+) -> Option<SourceValue<Vec<String>>> {
+    let raw = node.attribute("swTransform")?;
+    let tokens = raw.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() != 16 || !tokens.iter().all(|token| is_finite_decimal(token)) {
+        builder.diagnostics.push(
+            Diagnostic::new(
+                "modern.component_transform_malformed",
+                DiagnosticSeverity::Warning,
+                DiagnosticKind::Preserved,
+                "component transform does not contain sixteen finite decimal tokens",
+            )
+            .in_stream(entry.path.clone().unwrap_or_default())
+            .with_detail("token_count", tokens.len().to_string()),
+        );
+        return None;
+    }
+    Some(SourceValue::new(
+        tokens.iter().map(|token| (*token).to_owned()).collect(),
+        ValueOrigin::Source,
+        evidence(entry, "swReference@swTransform"),
     ))
 }
 

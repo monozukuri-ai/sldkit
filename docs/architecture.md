@@ -47,11 +47,20 @@ An input follows this sequence:
    identities without assigning renderable semantics.
 6. **Geometry** explicitly decodes modern Part topology, carriers, and
    tessellation with provenance and a loss report.
-7. **Scan** resolves decoded document references within explicit filesystem
-   roots and produces a dependency graph.
+7. **Evaluate** derives sampled edges, bounds, edge smoothness, and mesh
+   quantities from a decoded geometry document without a geometry kernel.
+8. **Scan** resolves decoded document references within explicit filesystem
+   roots and produces a dependency graph; virtual components resolve to the
+   documents embedded in their assembly.
+9. **Index** applies the same resolution to every document under a project
+   root so that reverse references, such as the Drawings of a Part, are
+   answerable from one graph.
+10. **Bill of materials** expands the root occurrence tree of a scanned graph
+    and aggregates quantities per document and configuration.
 
 Each stage has its own result status. A recognized container does not imply that
-all document semantics were decoded. Geometry success is reported separately,
+all document semantics were decoded. Evaluation and bill-of-materials results
+derive from public models only and never re-read or reinterpret source bytes. Geometry success is reported separately,
 Drawing record inventory is reported separately, and a complete reference graph
 does not imply complete geometry or feature coverage.
 

@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .model import DrawingStructureResult, GeometryResult, ParseResult
+    from .model import (
+        DrawingStructureResult,
+        GeometryEvaluationResult,
+        GeometryResult,
+        ParseResult,
+    )
 
 
 class SldkitError(Exception):
@@ -41,5 +46,17 @@ class DrawingStructureError(SldkitError):
         message = (
             "strict Drawing structure inventory rejected "
             f"status={result.status.value}; {codes}"
+        )
+        super().__init__(message)
+
+
+class GeometryEvaluationError(SldkitError):
+    """Raised by strict geometry evaluation while retaining the structured result."""
+
+    def __init__(self, result: GeometryEvaluationResult) -> None:
+        self.result = result
+        codes = ", ".join(item.code for item in result.diagnostics) or "none"
+        message = (
+            f"strict geometry evaluation rejected status={result.status.value}; {codes}"
         )
         super().__init__(message)

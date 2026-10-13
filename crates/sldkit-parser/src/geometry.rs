@@ -37,6 +37,7 @@ use sldkit_core::{
 
 mod byte_partition;
 mod cylindrical_loops;
+pub(crate) mod evaluation;
 mod intervals;
 mod nurbs_intervals;
 mod parasolid;

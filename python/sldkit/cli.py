@@ -7,17 +7,22 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .api import (
+    build_bom,
     decode_drawing_structure_file,
     decode_geometry_file,
+    evaluate_geometry_file,
     extract_file,
+    index_project,
     inspect_file,
     parse_file,
     probe_file,
     scan_project,
 )
 from .model import (
+    BomStatus,
     DrawingStructureStatus,
     ExtractionStatus,
+    GeometryEvaluationStatus,
     GeometryStatus,
     InventoryStatus,
     ParseStatus,
@@ -37,6 +42,16 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--limits", choices=("desktop", "service"), default="desktop"
         )
+    evaluate = subparsers.add_parser(
+        "evaluate", help="Decode Part geometry and evaluate edges, bounds, and meshes"
+    )
+    evaluate.add_argument("path")
+    evaluate.add_argument("--chord-tolerance", type=float, default=0.01)
+    evaluate.add_argument("--max-segments-per-edge", type=int, default=512)
+    evaluate.add_argument("--tangent-angle", type=float, default=0.5)
+    evaluate.add_argument("--mesh-feature-angle", type=float, default=30.0)
+    evaluate.add_argument("--configuration")
+    evaluate.add_argument("--limits", choices=("desktop", "service"), default="desktop")
     extract = subparsers.add_parser("extract")
     extract.add_argument("path")
     extract.add_argument("entry_id")
@@ -67,7 +82,37 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--follow-suppressed", action="store_true")
     scan.add_argument("--summary", action="store_true")
     scan.add_argument("--limits", choices=("desktop", "service"), default="desktop")
+    index = subparsers.add_parser(
+        "index", help="Parse every document under a project root"
+    )
+    index.add_argument("project_root")
+    _add_resolution_arguments(index)
+    index.add_argument("--summary", action="store_true")
+    index.add_argument("--limits", choices=("desktop", "service"), default="desktop")
+    bom = subparsers.add_parser(
+        "bom", help="Expand an assembly into a bill of materials"
+    )
+    bom.add_argument("path")
+    bom.add_argument("--project-root")
+    bom.add_argument("--configuration")
+    _add_resolution_arguments(bom)
+    bom.add_argument("--include-suppressed", action="store_true")
+    bom.add_argument("--include-excluded", action="store_true")
+    bom.add_argument("--items-only", action="store_true")
+    bom.add_argument("--limits", choices=("desktop", "service"), default="desktop")
     return parser
+
+
+def _add_resolution_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--search-dir", action="append", default=[])
+    command.add_argument(
+        "--windows-prefix-map",
+        action="append",
+        default=[],
+        type=_windows_prefix_mapping,
+        metavar="SOURCE=TARGET",
+    )
+    command.add_argument("--follow-suppressed", action="store_true")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -132,6 +177,62 @@ def main(argv: Sequence[str] | None = None) -> int:
         }:
             return 1
         return 2
+
+    if args.command == "evaluate":
+        evaluation = evaluate_geometry_file(
+            args.path,
+            profile=args.limits,
+            chord_tolerance_mm=args.chord_tolerance,
+            max_segments_per_edge=args.max_segments_per_edge,
+            tangent_angle_deg=args.tangent_angle,
+            mesh_feature_angle_deg=args.mesh_feature_angle,
+            configuration=args.configuration,
+        )
+        print(json.dumps(evaluation.to_dict(), indent=2, sort_keys=True))
+        if evaluation.status in {
+            GeometryEvaluationStatus.EVALUATED,
+            GeometryEvaluationStatus.PARTIAL,
+        }:
+            return 0
+        return 1 if evaluation.status is GeometryEvaluationStatus.UNAVAILABLE else 2
+
+    if args.command == "index":
+        result = index_project(
+            args.project_root,
+            search_directories=args.search_dir,
+            windows_prefix_mappings=args.windows_prefix_map,
+            follow_suppressed=args.follow_suppressed,
+            profile=args.limits,
+        )
+        output = result.compatibility_report if args.summary else result
+        print(json.dumps(output.to_dict(), indent=2, sort_keys=True))
+        if result.status is ProjectScanStatus.COMPLETE:
+            return 0
+        return 1 if result.status is ProjectScanStatus.PARTIAL else 2
+
+    if args.command == "bom":
+        graph = scan_project(
+            args.path,
+            project_root=args.project_root,
+            configuration=args.configuration,
+            search_directories=args.search_dir,
+            windows_prefix_mappings=args.windows_prefix_map,
+            follow_suppressed=args.follow_suppressed,
+            profile=args.limits,
+        )
+        bom = build_bom(
+            graph,
+            root_configuration=args.configuration,
+            include_suppressed=args.include_suppressed,
+            include_excluded=args.include_excluded,
+        )
+        payload = bom.to_dict()
+        if args.items_only:
+            payload["occurrences"] = []
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        if bom.status is BomStatus.COMPLETE:
+            return 0
+        return 1 if bom.status is BomStatus.PARTIAL else 2
 
     if args.command == "scan":
         result = scan_project(

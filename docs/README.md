@@ -7,6 +7,8 @@ boundaries of `sldkit`.
 - [Architecture](architecture.md): package responsibilities and data flow
 - [Compatibility](compatibility.md): supported and unsupported capabilities
 - [Modern Part geometry](geometry.md): topology, carriers, tessellation, and fidelity
+- [Geometry evaluation](geometry-evaluation.md): sampled edges, bounds, edge smoothness, and mesh quantities
+- [Typed document facts](document-facts.md): component attributes, units, material, feature records, sheet facts, and embedded documents
 - [Offline viewer](viewer.md): interactive meshes, saved previews, and HTML export
 - [Modern Drawing structure](drawing-structure.md): exact record identity, hierarchy, and coverage
 - [Project scanning](project-scanning.md): reference-resolution behavior

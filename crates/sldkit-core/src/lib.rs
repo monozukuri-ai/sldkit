@@ -1,14 +1,20 @@
 //! Public contracts shared by the `SolidWorks` parser layers.
 
+mod bom;
 mod diagnostic;
 mod drawing;
 mod geometry;
+mod geometry_evaluation;
 mod inventory;
 mod limits;
 mod model;
 mod project;
 mod result;
 
+pub use bom::{
+    BillOfMaterials, BomChildrenState, BomItem, BomItemKey, BomOccurrence, BomOptions, BomStatus,
+    BomSummary,
+};
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSeverity};
 pub use drawing::{
     DrawingBytePartitionStatus, DrawingCarrier, DrawingCarrierRole, DrawingRecord,
@@ -29,6 +35,12 @@ pub use geometry::{
     GeometryTessellationTextureAssignment, GeometryTessellationTriangleGroup,
     GeometryTopologyMetrics, GeometryVertex, GeometryVertexUse,
 };
+pub use geometry_evaluation::{
+    BoundingBoxMethod, EdgeIntervalSource, EdgeSampleStatus, EdgeSmoothness, EvaluatedBodyBounds,
+    EvaluatedBoundingBox, EvaluatedBounds, EvaluatedConfigurationBounds, EvaluatedEdge,
+    EvaluatedMesh, GeometryEvaluationDocument, GeometryEvaluationOptions, GeometryEvaluationResult,
+    GeometryEvaluationStatus, GeometryEvaluationSummary,
+};
 pub use inventory::{
     ByteRange, ChecksumStatus, CompressionMethod, ContainerInventory, ExtractionMode,
     ExtractionResult, ExtractionStatus, InventoryEntry, InventoryEntryKind, InventoryEntryState,
@@ -37,14 +49,16 @@ pub use inventory::{
 pub use limits::{LimitProfile, ResourceLimits};
 pub use model::{
     AssemblyComponent, BinaryResource, BinaryResourceKind, Configuration, CustomProperty,
-    DocumentKind, DocumentReference, DrawingSheet, DrawingView, Envelope, MassProperties,
-    PropertyKind, PropertyScope, PropertyValueState, RecordOffsetBasis, ReferenceKind,
-    SourceDocument, SourceInfo, SourceInputKind, SourceValue, UnknownRecord, ValueOrigin,
+    DocumentKind, DocumentReference, DocumentUnits, DrawingSheet, DrawingSheetFormatData,
+    DrawingView, EmbeddedDocument, EmbeddedDocumentRole, Envelope, FeatureDimension, FeatureRecord,
+    MassProperties, ModelBoundingBox, PropertyKind, PropertyScope, PropertyValueState,
+    RecordOffsetBasis, ReferenceKind, SourceDocument, SourceInfo, SourceInputKind, SourceValue,
+    UnitSetting, UnknownRecord, ValueOrigin,
 };
 pub use project::{
-    ProjectCompatibilityReport, ProjectConfigurationIdentity, ProjectEdge, ProjectNode,
-    ProjectScanResult, ProjectScanStatus, ReferenceResolutionBasis, ReferenceResolutionStatus,
-    ReferenceTraversalStatus,
+    EmbeddedNodeSource, ProjectCompatibilityReport, ProjectConfigurationIdentity, ProjectEdge,
+    ProjectNode, ProjectScanResult, ProjectScanStatus, ReferenceResolutionBasis,
+    ReferenceResolutionStatus, ReferenceTraversalStatus,
 };
 pub use result::{
     CoverageReport, ParseResult, ParseStatus, ProbeConfidence, ProbeEvidence, ProbeResult,

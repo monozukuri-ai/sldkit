@@ -290,16 +290,10 @@ def test_geometry_rejects_non_part_document_kind():
 def test_drawing_structure_api_is_typed_deterministic_and_matches_native_json():
     payload = drawing_file()
 
-    result = sldkit.decode_drawing_structure_bytes(
-        payload, filename="fixture.SLDDRW"
-    )
-    repeated = sldkit.decode_drawing_structure_bytes(
-        payload, filename="fixture.SLDDRW"
-    )
+    result = sldkit.decode_drawing_structure_bytes(payload, filename="fixture.SLDDRW")
+    repeated = sldkit.decode_drawing_structure_bytes(payload, filename="fixture.SLDDRW")
     native = json.loads(
-        _core.decode_drawing_structure_bytes_json(
-            payload, "fixture.SLDDRW", "desktop"
-        )
+        _core.decode_drawing_structure_bytes_json(payload, "fixture.SLDDRW", "desktop")
     )
 
     assert result == repeated
@@ -339,8 +333,7 @@ def test_drawing_structure_api_is_typed_deterministic_and_matches_native_json():
         and record.direct_text == "child.SLDPRT"
     )
     raw = drawing_keywords()[
-        view.source.decoded_offset : view.source.decoded_offset
-        + view.source.byte_len
+        view.source.decoded_offset : view.source.decoded_offset + view.source.byte_len
     ]
     assert raw.startswith(b"<View") and raw.endswith(b"</View>")
     assert view.source.sha256 == hashlib.sha256(raw).hexdigest()
@@ -597,3 +590,350 @@ def test_project_scan_rejects_unparseable_root(tmp_path):
         diagnostic.code == "project.root_parse_unavailable"
         for diagnostic in result.diagnostics
     )
+
+
+def virtual_assembly_file(embedded_part: bytes) -> bytes:
+    xml = (
+        '<root><swHeader><swFile id="0" swDocType="ASSEMBLY"/>'
+        '<swFile id="1" swDocType="PART" '
+        'swPath="C:\\Temp\\swx1\\VC~~\\root\\Inner^root.sldprt"/>'
+        '<swFile id="2" swDocType="PART" swPath="loose.SLDPRT"/>'
+        "</swHeader><swModelList>"
+        '<swModel id="self" swFileRef="0" swConfigurationId="0" '
+        'swBoundingBox="-0.01 -0.02 0 0.03 0.04 0.05">'
+        '<swConfiguration swID="0" swName="Default"/>'
+        '<swReference swModelRef="m1" swName="Inner^root" swSuppressed="NO" '
+        'swIsVirtualComponent="YES" swFlexible="NO" swReferenceNumber="1" '
+        'swID="7" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0.5 0 0 1"/>'
+        '<swReference swModelRef="m2" swName="loose-1" swSuppressed="NO" '
+        'swReferenceNumber="1" swID="8"/>'
+        '<swReference swModelRef="m2" swName="loose-2" swSuppressed="YES" '
+        'swReferenceNumber="2" swID="9"/>'
+        "</swModel>"
+        '<swModel id="m1" swFileRef="1" swConfigurationName="Default"/>'
+        '<swModel id="m2" swFileRef="2" swConfigurationName="Default"/>'
+        "</swModelList></root>"
+    )
+    return modern_streams(
+        (
+            ("swXmlContents/COMPINSTANCETREE", xml.encode()),
+            ("VirtualComp/Inner", embedded_part),
+        )
+    )
+
+
+def test_parse_exposes_typed_component_facts_and_embedded_documents():
+    result = sldkit.parse_bytes(
+        virtual_assembly_file(part_file()), filename="root.SLDASM"
+    )
+    document = result.document
+    assert document is not None
+    configuration = document.configurations[0]
+    assert configuration.bounding_box is not None
+    assert configuration.bounding_box.min == ("-0.01", "-0.02", "0")
+    assert configuration.bounding_box.length_unit.value == "meter"
+    assert configuration.bounding_box.length_unit.origin is sldkit.ValueOrigin.INFERRED
+    component = configuration.components[0]
+    assert component.is_virtual is not None and component.is_virtual.value is True
+    assert component.is_flexible is not None and component.is_flexible.value is False
+    assert (
+        component.instance_number is not None and component.instance_number.value == 1
+    )
+    assert component.component_id is not None and component.component_id.value == 7
+    assert component.raw_transform is not None
+    assert len(component.raw_transform.value) == 16
+    assert component.raw_transform.value[12] == "0.5"
+    assert configuration.components[1].raw_transform is None
+    embedded = document.embedded_documents
+    assert [item.name for item in embedded] == ["Inner"]
+    assert embedded[0].role is sldkit.EmbeddedDocumentRole.VIRTUAL_COMPONENT
+    assert embedded[0].envelope is sldkit.Envelope.MODERN_CHUNK
+    extracted = sldkit.extract_bytes(
+        virtual_assembly_file(part_file()), embedded[0].entry_id
+    )
+    assert extracted.data is not None
+    nested = sldkit.parse_bytes(extracted.data, filename="Inner.SLDPRT")
+    assert nested.document is not None
+    assert nested.document.document_kind.value is sldkit.DocumentKind.PART
+    assert result.to_dict() == json.loads(
+        _core.parse_bytes_json(
+            virtual_assembly_file(part_file()), "root.SLDASM", "desktop"
+        )
+    )
+
+
+def test_parse_exposes_material_units_feature_records_and_sheet_metadata():
+    keywords = (
+        b'<Keywords id="7" Name="Part2"><Configuration id="0" Name="Default" '
+        b'Type="ConfigurationManager" Material="Steel"/>'
+        b'<Extrusion id="30" Name="Boss-Extrude1" Type="Boss-Extrude">'
+        b'<Dimension Name="D1">20</Dimension></Extrusion>'
+        b'<HoleWizard id="37" Name="CBORE1" Dissectable="true" '
+        b'DissectableChildren="36,35" DissectableRoot="true"/></Keywords>'
+    )
+    system = (
+        b'<root><propertySection name="UserDefinedProperties">'
+        b'<property name="SW_UnitSystem" pid="21"><i4>4</i4></property>'
+        b'<property name="SW_UnitsLinear" pid="22"><i4>3</i4></property>'
+        b'<property name="SW_UnitsLinearDecimalPlaces" pid="24"><i4>3</i4></property>'
+        b"</propertySection></root>"
+    )
+    part = modern_streams(
+        (
+            ("swXmlContents/KeyWords", keywords),
+            ("docProps/ISolidWorksInformation.xml", system),
+        )
+    )
+    document = sldkit.parse_bytes(part, filename="part.SLDPRT").document
+    assert document is not None
+    assert document.configurations[0].material is not None
+    assert document.configurations[0].material.value == "Steel"
+    units = document.units
+    assert units is not None
+    assert units.unit_system is not None and units.unit_system.code.value == 4
+    assert units.unit_system.name is not None
+    assert units.unit_system.name.value == "mmgs"
+    assert units.unit_system.name.origin is sldkit.ValueOrigin.INFERRED
+    assert units.length is not None and units.length.name is not None
+    assert units.length.name.value == "inch"
+    assert units.length_decimal_places is not None
+    assert units.length_decimal_places.value == 3
+    assert units.angle is None
+    tags = [
+        (record.source_tag, record.source_id) for record in document.feature_records
+    ]
+    assert tags == [("Extrusion", "30"), ("HoleWizard", "37")]
+    assert document.feature_records[0].dimensions[0].raw_value == "20"
+    assert document.feature_records[1].dissectable_children == ("36", "35")
+    assert (
+        document.to_dict()
+        == json.loads(_core.parse_bytes_json(part, "part.SLDPRT", "desktop"))[
+            "document"
+        ]
+    )
+
+    sheet_keywords = (
+        b'<Keywords><Sheet id="4" Name="Sheet1" Type="Sheet">'
+        b'<PaperSize id="" Description="8">A3</PaperSize>'
+        b'<ScaleDenominator id="">2.000000</ScaleDenominator>'
+        b'<ScaleNumerator id="">1.000000</ScaleNumerator>'
+        b'<TemplateName id="">C:\\templates\\a3.slddrt</TemplateName>'
+        b'<View id="2" Name="Front" Description="Default">part.sldprt</View>'
+        b"</Sheet></Keywords>"
+    )
+    sheet_system = (
+        b'<root><propertySection name="UserDefinedProperties">'
+        b'<property name="SW-All Sheet Format Data" pid="9"><lpstr>'
+        b"Sheet1@8.000000@0.420000@0.297000@1.000000@2.000000@0.000000@"
+        b"C:\\templates\\a3.slddrt@8.000000@1.000000@@</lpstr></property>"
+        b"</propertySection></root>"
+    )
+    drawing = modern_streams(
+        (
+            ("swXmlContents/KeyWords", sheet_keywords),
+            ("docProps/ISolidWorksInformation.xml", sheet_system),
+        )
+    )
+    sheet = sldkit.parse_bytes(drawing, filename="d.SLDDRW").document.sheets[0]
+    assert sheet.paper_size is not None and sheet.paper_size.value == "A3"
+    assert sheet.paper_size_code is not None and sheet.paper_size_code.value == 8
+    assert sheet.paper_size_name is not None and sheet.paper_size_name.value == "a3"
+    assert sheet.scale_numerator is not None
+    assert sheet.scale_numerator.value == "1.000000"
+    assert sheet.scale_denominator is not None
+    assert sheet.scale_denominator.value == "2.000000"
+    assert sheet.sheet_format_path is not None
+    assert sheet.sheet_format_path.value == "C:\\templates\\a3.slddrt"
+    assert sheet.width is not None and sheet.width.value == "0.420000"
+    assert sheet.height is not None and sheet.height.value == "0.297000"
+    assert sheet.format_data is not None and len(sheet.format_data.fields) == 10
+    assert (
+        sheet.to_dict()
+        == json.loads(_core.parse_bytes_json(drawing, "d.SLDDRW", "desktop"))[
+            "document"
+        ]["sheets"][0]
+    )
+
+
+def test_project_scan_resolves_virtual_components_to_embedded_nodes(tmp_path):
+    root = tmp_path / "root.SLDASM"
+    root.write_bytes(virtual_assembly_file(part_file()))
+    (tmp_path / "loose.SLDPRT").write_bytes(part_file())
+
+    result = sldkit.scan_project(root, project_root=tmp_path, configuration="Default")
+
+    assert result.status is sldkit.ProjectScanStatus.COMPLETE
+    virtual = result.edges[0]
+    assert virtual.is_virtual is True
+    assert virtual.instance_number == 1
+    assert virtual.resolution_basis is (
+        sldkit.ReferenceResolutionBasis.EMBEDDED_VIRTUAL_COMPONENT
+    )
+    assert virtual.resolved_path == "root.SLDASM#VirtualComp/Inner"
+    embedded = result.node_by_path("root.SLDASM#VirtualComp/Inner")
+    assert embedded is not None
+    assert embedded.document_kind is sldkit.DocumentKind.PART
+    assert embedded.embedded_source is not None
+    assert embedded.embedded_source.container_node_id == result.root_node_id
+    assert embedded.embedded_source.stream_path == "VirtualComp/Inner"
+    assert result.to_dict() == json.loads(
+        _core.scan_project_json(
+            str(root), str(tmp_path), "Default", [], [], False, "desktop"
+        )
+    )
+
+
+def test_index_project_supports_reverse_lookup(tmp_path):
+    (tmp_path / "parts").mkdir()
+    (tmp_path / "parts" / "leaf.SLDPRT").write_bytes(part_file())
+    (tmp_path / "top.SLDASM").write_bytes(
+        assembly_file(("parts/leaf.SLDPRT", "PART", "leaf-1", False))
+    )
+    keywords = (
+        b'<Keywords><Sheet Type="Sheet" Name="Sheet1" id="s1">'
+        b'<View Name="Front" Description="Default" id="v1">parts/leaf.SLDPRT</View>'
+        b"</Sheet></Keywords>"
+    )
+    (tmp_path / "leaf.SLDDRW").write_bytes(
+        modern_file(keywords, "swXmlContents/KeyWords")
+    )
+
+    result = sldkit.index_project(tmp_path, profile="service")
+    native = json.loads(
+        _core.index_project_json(str(tmp_path), [], [], False, "service")
+    )
+
+    assert result.status is sldkit.ProjectScanStatus.COMPLETE
+    assert result.root_node_id is None
+    assert result.to_dict() == native
+    assert all(node.is_root for node in result.nodes)
+    leaf = result.node_by_path("parts/leaf.SLDPRT")
+    assert leaf is not None
+    assert {edge.kind for edge in result.edges_to(leaf.id)} == {
+        sldkit.ReferenceKind.ASSEMBLY_COMPONENT,
+        sldkit.ReferenceKind.DRAWING_VIEW,
+    }
+    drawings = result.referencing_nodes(leaf.id, kind=sldkit.ReferenceKind.DRAWING_VIEW)
+    assert [node.path for node in drawings] == ["leaf.SLDDRW"]
+
+
+def test_build_bom_aggregates_quantities_and_requires_root_configuration(tmp_path):
+    (tmp_path / "bolt.SLDPRT").write_bytes(part_file())
+    (tmp_path / "sub.SLDASM").write_bytes(
+        assembly_file(
+            ("bolt.SLDPRT", "PART", "bolt-1", False),
+            ("bolt.SLDPRT", "PART", "bolt-2", False),
+        )
+    )
+    root = tmp_path / "root.SLDASM"
+    root.write_bytes(
+        assembly_file(
+            ("sub.SLDASM", "ASSEMBLY", "sub-1", False),
+            ("sub.SLDASM", "ASSEMBLY", "sub-2", False),
+            ("bolt.SLDPRT", "PART", "bolt-3", True),
+            ("gone.SLDPRT", "PART", "gone-1", False),
+        )
+    )
+
+    graph = sldkit.scan_project(root, project_root=tmp_path, configuration="Default")
+    bom = sldkit.build_bom(graph)
+    native = json.loads(
+        _core.build_bom_json(
+            json.dumps(graph.to_dict(), separators=(",", ":"), sort_keys=True),
+            json.dumps(sldkit.BomOptions().to_dict(), sort_keys=True),
+        )
+    )
+
+    assert bom.to_dict() == native
+    assert bom.status is sldkit.BomStatus.PARTIAL
+    assert bom.root_configuration == "Default"
+    assert bom.summary.occurrence_count == 1 + 4 + 2 * 2
+    by_name = {item.display_name: item for item in bom.items}
+    assert by_name["sub.SLDASM"].quantity == 2
+    assert by_name["bolt.SLDPRT"].quantity == 4
+    assert by_name["bolt.SLDPRT"].suppressed_quantity == 1
+    assert by_name["gone.SLDPRT"].key.node_id is None
+    assert by_name["gone.SLDPRT"].quantity == 1
+    assert [item.display_name for item in bom.part_items()] == ["bolt.SLDPRT"]
+    assert by_name["gone.SLDPRT"].document_kind is None
+    root_children = bom.children_of(bom.occurrences[0].id)
+    assert [item.instance_name for item in root_children] == [
+        "sub-1",
+        "sub-2",
+        "bolt-3",
+        "gone-1",
+    ]
+    assert root_children[2].children_state is sldkit.BomChildrenState.SUPPRESSED
+    assert root_children[3].children_state is sldkit.BomChildrenState.UNRESOLVED
+
+    inclusive = sldkit.build_bom(graph, include_suppressed=True)
+    assert {item.display_name: item.quantity for item in inclusive.items}[
+        "bolt.SLDPRT"
+    ] == 5
+
+    multi = sldkit.scan_project(root, project_root=tmp_path)
+    single = sldkit.build_bom(multi)
+    assert single.root_configuration == "Default"
+    assert single.status is sldkit.BomStatus.PARTIAL
+    assert single.summary.children_state_counts["unresolved"] == 1
+    renamed = sldkit.build_bom(multi, root_configuration="Nope")
+    assert renamed.status is sldkit.BomStatus.REJECTED
+    assert any(
+        diagnostic.code == "bom.root_configuration_missing"
+        for diagnostic in renamed.diagnostics
+    )
+
+
+def test_geometry_evaluation_is_typed_and_matches_native_json():
+    payload = part_file() + modern_frame(
+        "Contents/DisplayLists", display_list_payload()
+    )
+
+    result = sldkit.evaluate_geometry_bytes(payload, filename="cache.SLDPRT")
+    native = json.loads(
+        _core.evaluate_geometry_bytes_json(payload, "cache.SLDPRT", "desktop", "{}")
+    )
+
+    assert result.to_dict() == native
+    assert sldkit.GeometryEvaluationResult.from_dict(native) == result
+    assert result.status is sldkit.GeometryEvaluationStatus.EVALUATED
+    evaluation = result.evaluation
+    assert evaluation is not None
+    assert evaluation.options == sldkit.GeometryEvaluationOptions()
+    assert evaluation.edges == ()
+    assert len(evaluation.meshes) == 1
+    mesh = evaluation.meshes[0]
+    assert mesh.triangle_count == 1
+    assert mesh.is_closed is False
+    assert mesh.signed_volume_mm3 is None
+    assert mesh.area_mm2 == pytest.approx(500_000.0)
+    assert mesh.boundary_edges == ((0, 1), (0, 2), (1, 2))
+    assert evaluation.bounding_box is not None
+    assert evaluation.bounding_box.method is sldkit.BoundingBoxMethod.TESSELLATION
+    assert evaluation.bounding_box.exact is False
+    assert evaluation.bounding_box.bounds.size == (1000.0, 1000.0, 0.0)
+    assert evaluation.summary.mesh_count == 1
+    assert {loss.code for loss in evaluation.losses} >= {"evaluation.mesh_not_closed"}
+
+    decoded = sldkit.decode_geometry_bytes(payload, filename="cache.SLDPRT")
+    from_result = sldkit.evaluate_geometry(decoded, mesh_feature_angle_deg=45.0)
+    assert from_result.evaluation is not None
+    assert from_result.evaluation.options.mesh_feature_angle_deg == 45.0
+    assert from_result.evaluation.meshes[0].feature_angle_deg == 45.0
+    assert from_result.evaluation.summary == evaluation.summary
+
+    strict = sldkit.evaluate_geometry_bytes(
+        payload, filename="cache.SLDPRT", strict=True
+    )
+    assert strict == result
+    with pytest.raises(TypeError):
+        sldkit.evaluate_geometry_bytes(payload, filename="cache.SLDPRT", bogus=1)
+
+    unavailable = sldkit.evaluate_geometry_bytes(assembly_file(), filename="x.SLDASM")
+    assert unavailable.status is sldkit.GeometryEvaluationStatus.UNAVAILABLE
+    assert unavailable.evaluation is None
+    rejected = sldkit.evaluate_geometry_bytes(payload, chord_tolerance_mm=-1.0)
+    assert rejected.status is sldkit.GeometryEvaluationStatus.REJECTED
+    with pytest.raises(sldkit.GeometryEvaluationError) as caught:
+        sldkit.evaluate_geometry_bytes(payload, chord_tolerance_mm=-1.0, strict=True)
+    assert caught.value.result.status is sldkit.GeometryEvaluationStatus.REJECTED

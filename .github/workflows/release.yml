@@ -50,6 +50,12 @@ jobs:
             interpreter: python3.13
             manylinux: "2_28"
             artifact: linux-x86_64
+          - name: Linux aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            interpreter: python3.13
+            manylinux: "2_28"
+            artifact: linux-aarch64
           - name: Windows x86_64
             runner: windows-latest
             target: x64
@@ -172,9 +178,9 @@ jobs:
           root = Path("dist")
           wheels = sorted(root.glob("*.whl"))
           sdists = sorted(root.glob("*.tar.gz"))
-          if len(wheels) != 3 or len(sdists) != 1:
+          if len(wheels) != 4 or len(sdists) != 1:
               raise SystemExit(
-                  f"expected 3 wheels and 1 sdist, found {len(wheels)} wheels "
+                  f"expected 4 wheels and 1 sdist, found {len(wheels)} wheels "
                   f"and {len(sdists)} sdists"
               )
           print("publication bundle:", *(path.name for path in wheels + sdists), sep="\n- ")

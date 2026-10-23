@@ -22,5 +22,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "display"
+path = "fuzz_targets/display.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

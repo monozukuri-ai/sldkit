@@ -14,6 +14,7 @@ as a typed Python package through PyO3.
 | Modern metadata, properties, configurations, and references | Partial, source-faithful profile |
 | Typed component flags, unit settings, material labels, feature records, sheet facts, embedded virtual components | Source tokens plus labelled inferences |
 | Modern `.SLDPRT` B-Rep and tessellation | Explicit partial profile with provenance and loss records |
+| Saved display meshes | Packed `DisplayLists` meshes, colors, and face outlines for Parts, Assemblies, and `__ZLB` OLE2 Parts without B-Rep decoding |
 | Modern `.SLDDRW` source structure | Exact XML record inventory plus unframed Drawing carrier candidates; no render semantics |
 | Kernel-free geometry evaluation | Sampled edge polylines, bounds, edge smoothness, and mesh quantities with explicit withheld states |
 | Directory project graph | Bounded and deterministic for decoded references, including embedded virtual components |
@@ -94,6 +95,10 @@ if part is not None:
     for drawing in index.referencing_nodes(part.id, kind=sldkit.ReferenceKind.DRAWING_VIEW):
         print(drawing.path)
 
+display = sldkit.decode_display_mesh_file("part.SLDPRT", profile="service")
+if display.mesh is not None:
+    print(display.mesh.triangle_count, len(display.positions), len(display.edges))
+
 evaluation = sldkit.evaluate_geometry_file("part.SLDPRT", chord_tolerance_mm=0.05)
 if evaluation.evaluation is not None:
     print(evaluation.evaluation.bounding_box, evaluation.evaluation.summary)
@@ -101,7 +106,8 @@ if evaluation.evaluation is not None:
 
 Typed component flags, document units, material labels, feature records, and
 sheet facts are described in [document facts](docs/document-facts.md);
-[geometry evaluation](docs/geometry-evaluation.md) and
+[geometry evaluation](docs/geometry-evaluation.md),
+[saved display meshes](docs/display-mesh.md), and
 [project scanning](docs/project-scanning.md) cover the derived APIs.
 
 Use `strict=True` with `parse_file` or `parse_bytes` when an unsupported or
@@ -122,6 +128,7 @@ when sharing compatibility results:
 sldkit scan project/top.SLDASM --project-root project --summary
 sldkit-rs scan project/top.SLDASM --project-root project --summary
 sldkit drawing drawing.SLDDRW --limits service
+sldkit display part.SLDPRT --limits service
 sldkit-rs drawing drawing.SLDDRW --limits service
 sldkit evaluate part.SLDPRT --chord-tolerance 0.05
 sldkit index project --summary

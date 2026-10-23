@@ -1,6 +1,7 @@
 //! High-level path and byte entry points for `SolidWorks` parsing.
 
 mod bom;
+mod display;
 mod drawing;
 mod geometry;
 mod legacy_semantics;
@@ -25,9 +26,10 @@ use sldkit_container::{
     probe_bytes as probe_container_bytes,
 };
 use sldkit_core::{
-    BinaryResource, CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity, DocumentKind,
-    DrawingStructureResult, DrawingStructureStatus, Envelope, ExtractionMode, ExtractionResult,
-    ExtractionStatus, GeometryDocument, GeometryEvaluationOptions, GeometryEvaluationResult,
+    BinaryResource, CoverageReport, Diagnostic, DiagnosticKind, DiagnosticSeverity,
+    DisplayMeshBuffers, DisplayMeshResult, DisplayMeshStatus, DocumentKind, DrawingStructureResult,
+    DrawingStructureStatus, Envelope, ExtractionMode, ExtractionResult, ExtractionStatus,
+    GeometryDocument, GeometryEvaluationOptions, GeometryEvaluationResult,
     GeometryEvaluationStatus, GeometryResult, GeometryStatus, InventoryResult, InventoryStatus,
     ParseResult, ParseStatus, ProbeConfidence, ProbeResult, ProbeStatus, ResourceLimits,
     SourceDocument, SourceInfo, SourceInputKind, SourceValue, StreamExtraction, ValueOrigin,
@@ -269,6 +271,40 @@ pub fn decode_geometry_path(path: impl AsRef<Path>, limits: &ResourceLimits) -> 
             geometry: None,
             diagnostics: vec![failure.diagnostic],
         },
+    }
+}
+
+/// Decode saved display meshes (`DisplayLists`) from in-memory bytes.
+///
+/// This capability never runs the B-Rep decoder. The JSON-facing result
+/// describes streams and parts; the packed arrays are returned beside it.
+#[must_use]
+pub fn decode_display_mesh_bytes(
+    data: &[u8],
+    filename: Option<&str>,
+    limits: &ResourceLimits,
+) -> (DisplayMeshResult, DisplayMeshBuffers) {
+    display::decode(data, filename, SourceInputKind::Bytes, limits)
+}
+
+/// Read a bounded path and decode its saved display meshes.
+#[must_use]
+pub fn decode_display_mesh_path(
+    path: impl AsRef<Path>,
+    limits: &ResourceLimits,
+) -> (DisplayMeshResult, DisplayMeshBuffers) {
+    let path = path.as_ref();
+    let label = path.to_string_lossy().into_owned();
+    match read_path_bounded(path, limits) {
+        Ok(data) => display::decode(&data, Some(&label), SourceInputKind::Path, limits),
+        Err(failure) => (
+            DisplayMeshResult {
+                status: DisplayMeshStatus::Rejected,
+                mesh: None,
+                diagnostics: vec![failure.diagnostic],
+            },
+            DisplayMeshBuffers::default(),
+        ),
     }
 }
 

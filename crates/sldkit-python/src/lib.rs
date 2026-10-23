@@ -6,7 +6,10 @@ use pyo3::{
     wrap_pyfunction,
 };
 use serde::Serialize;
-use sldkit_core::{BinaryResource, ExtractionMode, LimitProfile, ResourceLimits, StreamExtraction};
+use sldkit_core::{
+    BinaryResource, DisplayMeshBuffers, DisplayMeshResult, ExtractionMode, LimitProfile,
+    ResourceLimits, StreamExtraction,
+};
 
 #[pyfunction]
 fn probe_bytes_json(data: &[u8], profile: &str) -> PyResult<String> {
@@ -77,6 +80,63 @@ fn decode_geometry_file_json(path: &str, profile: &str) -> PyResult<String> {
         path,
         &limits_for_profile(profile)?,
     ))
+}
+
+/// JSON result plus packed little-endian positions, normals, indices, and edges.
+type DisplayMeshPayload<'py> = (
+    String,
+    Bound<'py, PyBytes>,
+    Bound<'py, PyBytes>,
+    Bound<'py, PyBytes>,
+    Bound<'py, PyBytes>,
+);
+
+fn display_mesh_to_python(
+    py: Python<'_>,
+    (result, buffers): (DisplayMeshResult, DisplayMeshBuffers),
+) -> PyResult<DisplayMeshPayload<'_>> {
+    let floats = |values: &[f32]| {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<u8>>()
+    };
+    let integers = |values: &[u32]| {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<u8>>()
+    };
+    Ok((
+        to_json(&result)?,
+        PyBytes::new(py, &floats(&buffers.positions)),
+        PyBytes::new(py, &floats(&buffers.normals)),
+        PyBytes::new(py, &integers(&buffers.indices)),
+        PyBytes::new(py, &integers(&buffers.edges)),
+    ))
+}
+
+#[pyfunction]
+fn decode_display_mesh_bytes<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    filename: Option<&str>,
+    profile: &str,
+) -> PyResult<DisplayMeshPayload<'py>> {
+    let limits = limits_for_profile(profile)?;
+    let decoded = py.detach(|| sldkit_parser::decode_display_mesh_bytes(data, filename, &limits));
+    display_mesh_to_python(py, decoded)
+}
+
+#[pyfunction]
+fn decode_display_mesh_file<'py>(
+    py: Python<'py>,
+    path: &str,
+    profile: &str,
+) -> PyResult<DisplayMeshPayload<'py>> {
+    let limits = limits_for_profile(profile)?;
+    let decoded = py.detach(|| sldkit_parser::decode_display_mesh_path(path, &limits));
+    display_mesh_to_python(py, decoded)
 }
 
 #[pyfunction]
@@ -328,6 +388,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(parse_file_json, module)?)?;
     module.add_function(wrap_pyfunction!(decode_geometry_bytes_json, module)?)?;
     module.add_function(wrap_pyfunction!(decode_geometry_file_json, module)?)?;
+    module.add_function(wrap_pyfunction!(decode_display_mesh_bytes, module)?)?;
+    module.add_function(wrap_pyfunction!(decode_display_mesh_file, module)?)?;
     module.add_function(wrap_pyfunction!(
         decode_drawing_structure_bytes_json,
         module

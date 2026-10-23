@@ -46,3 +46,9 @@ def extract_resource_bytes_result(
 def extract_resource_file_result(
     path: str, resource_json: str, profile: str
 ) -> tuple[str, bytes | None]: ...
+def decode_display_mesh_bytes(
+    data: bytes, filename: str | None, profile: str
+) -> tuple[str, bytes, bytes, bytes, bytes]: ...
+def decode_display_mesh_file(
+    path: str, profile: str
+) -> tuple[str, bytes, bytes, bytes, bytes]: ...

@@ -2,6 +2,7 @@
 
 mod bom;
 mod diagnostic;
+mod display;
 mod drawing;
 mod geometry;
 mod geometry_evaluation;
@@ -16,6 +17,11 @@ pub use bom::{
     BomSummary,
 };
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSeverity};
+pub use display::{
+    DisplayColorSource, DisplayMeshBounds, DisplayMeshBuffers, DisplayMeshDocument,
+    DisplayMeshPart, DisplayMeshResult, DisplayMeshStatus, DisplayMeshStream,
+    DisplaySurfaceReference,
+};
 pub use drawing::{
     DrawingBytePartitionStatus, DrawingCarrier, DrawingCarrierRole, DrawingRecord,
     DrawingRecordClass, DrawingRecordSource, DrawingStructureCoverage, DrawingStructureDocument,

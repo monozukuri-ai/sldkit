@@ -16,6 +16,7 @@ parsed.
 | Modern Part geometry | Explicit partial decoding of B-Rep topology, analytic and NURBS carriers, display tessellation, configuration body state, provenance, and loss records |
 | Modern Drawing structure | Deterministic inventory of `KeyWords` XML elements with exact decoded ranges, hierarchy, parsed source fields, direct sheet/view membership, and exact unframed carrier identities |
 | Legacy OLE2/CFB documents | Partial decoding of document kind, internal version, standard and application property sets, selected configuration headers, and DIB or PNG previews |
+| Saved display meshes | Packed `DisplayLists` meshes, saved colors, and face outlines for modern Parts and Assemblies and `__ZLB` OLE2 Parts, independent of B-Rep decoding; see [display meshes](display-mesh.md) |
 | Geometry evaluation | Kernel-free sampled edge polylines, bounding boxes, edge smoothness from adjacent face normals, and mesh quantities over decoded modern Part geometry |
 | Project scanning | Bounded dependency graph for decoded Part, Assembly, and Drawing references, including virtual components embedded in their assembly |
 | Project index and bill of materials | Whole-project reverse-reference graph and occurrence expansion with per-document, per-configuration quantities |
@@ -50,7 +51,9 @@ partially parsed SolidWorks document.
 - Legacy feature data, model references, assembly occurrences, drawing sheets,
   and geometry
 - Semantic decoding of ZIP/OPC SolidWorks content
-- Legacy, Assembly, and Drawing B-Rep or tessellation geometry
+- Legacy, Assembly, and Drawing B-Rep geometry, and legacy `DisplayLists__Zip`
+  display streams; saved display meshes of modern Parts and Assemblies and of
+  `__ZLB` OLE2 Parts are covered by [display meshes](display-mesh.md)
 - Feature-history reconstruction; the saved feature-record inventory is a
   name and display-value index only
 - Mate semantics and component occurrence transforms; the sixteen `swTransform`

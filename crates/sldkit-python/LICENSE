@@ -157,7 +157,10 @@ commercial agreements, subject to the exceptions below.
   revision `dbb308e52ab05c911b26963a02fbb294eefab3ce`.
   Source headers, vendor LICENSE and `vendor/cadmpeg-codec-sldprt/PATCHES.md`
   preserve attribution and modifications. The vendor subtree stays Apache-2.0,
-  including this migration's dependency update. The upstream root text is
+  including this migration's dependency update. The display-mesh reader in
+  `crates/sldkit-parser/src/display/tables.rs` and `appearance.rs` adopts the
+  0.5.3 `tessellation.rs` and `appearance.rs` grammar and retains Apache-2.0;
+  its file headers identify the origin. The upstream root text is
   `LICENSES/Apache-2.0.txt`; registry container/core/ir packages omit a separate
   license-text file. Source headers remain in the supplied vendor sources.
 - Three.js 0.180.0, including OrbitControls, MIT, from

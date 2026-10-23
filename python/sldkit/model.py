@@ -3041,6 +3041,261 @@ class GeometryResult:
         }
 
 
+class DisplayMeshStatus(_StringEnum):
+    DECODED = "decoded"
+    PARTIAL = "partial"
+    UNSUPPORTED = "unsupported"
+    MALFORMED = "malformed"
+    REJECTED = "rejected"
+
+
+class DisplayColorSource(_StringEnum):
+    BODY = "body"
+    FEATURE = "feature"
+    FACE = "face"
+
+
+@dataclass(frozen=True, slots=True)
+class DisplaySurfaceReference:
+    identity: str
+    feature_source_id: int
+    local_surface_id: int
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DisplaySurfaceReference:
+        return cls(
+            identity=str(value["identity"]),
+            feature_source_id=int(value["feature_source_id"]),
+            local_surface_id=int(value["local_surface_id"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "identity": self.identity,
+            "feature_source_id": self.feature_source_id,
+            "local_surface_id": self.local_surface_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayMeshPart:
+    """One face table and its slices of the packed buffers."""
+
+    id: str
+    stream_index: int
+    table_index: int
+    table_offset: int
+    vertex_start: int
+    vertex_count: int
+    triangle_start: int
+    triangle_count: int
+    edge_start: int
+    edge_count: int
+    strip_count: int
+    normals_derived: bool
+    color: tuple[float, float, float, float] | None
+    color_source: DisplayColorSource | None
+    appearance_name: str | None
+    surface_references: tuple[DisplaySurfaceReference, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshPart:
+        source = value.get("color_source")
+        return cls(
+            id=str(value["id"]),
+            stream_index=int(value["stream_index"]),
+            table_index=int(value["table_index"]),
+            table_offset=int(value["table_offset"]),
+            vertex_start=int(value["vertex_start"]),
+            vertex_count=int(value["vertex_count"]),
+            triangle_start=int(value["triangle_start"]),
+            triangle_count=int(value["triangle_count"]),
+            edge_start=int(value["edge_start"]),
+            edge_count=int(value["edge_count"]),
+            strip_count=int(value["strip_count"]),
+            normals_derived=bool(value["normals_derived"]),
+            color=_optional_float_quad(value.get("color")),
+            color_source=None if source is None else DisplayColorSource(source),
+            appearance_name=_optional_str(value.get("appearance_name")),
+            surface_references=tuple(
+                DisplaySurfaceReference.from_dict(item)
+                for item in value.get("surface_references", [])
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "stream_index": self.stream_index,
+            "table_index": self.table_index,
+            "table_offset": self.table_offset,
+            "vertex_start": self.vertex_start,
+            "vertex_count": self.vertex_count,
+            "triangle_start": self.triangle_start,
+            "triangle_count": self.triangle_count,
+            "edge_start": self.edge_start,
+            "edge_count": self.edge_count,
+            "strip_count": self.strip_count,
+            "normals_derived": self.normals_derived,
+            "color": None if self.color is None else list(self.color),
+            "color_source": (
+                None if self.color_source is None else self.color_source.value
+            ),
+            "appearance_name": self.appearance_name,
+        }
+        if self.surface_references:
+            result["surface_references"] = [
+                item.to_dict() for item in self.surface_references
+            ]
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayMeshStream:
+    entry_id: str
+    stream_path: str
+    decoded_size: int
+    decoded_sha256: str | None
+    part_count: int
+    trailing_names: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshStream:
+        return cls(
+            entry_id=str(value["entry_id"]),
+            stream_path=str(value["stream_path"]),
+            decoded_size=int(value["decoded_size"]),
+            decoded_sha256=_optional_str(value.get("decoded_sha256")),
+            part_count=int(value["part_count"]),
+            trailing_names=_string_tuple(value.get("trailing_names", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "entry_id": self.entry_id,
+            "stream_path": self.stream_path,
+            "decoded_size": self.decoded_size,
+            "decoded_sha256": self.decoded_sha256,
+            "part_count": self.part_count,
+        }
+        if self.trailing_names:
+            result["trailing_names"] = list(self.trailing_names)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayMeshBounds:
+    min: tuple[float, float, float]
+    max: tuple[float, float, float]
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshBounds:
+        return cls(min=_float_triple(value["min"]), max=_float_triple(value["max"]))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"min": list(self.min), "max": list(self.max)}
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayMeshDocument:
+    source: SourceInfo
+    envelope: Envelope
+    document_kind: DocumentKind
+    internal_version: int | None
+    length_unit: str
+    streams: tuple[DisplayMeshStream, ...]
+    parts: tuple[DisplayMeshPart, ...]
+    vertex_count: int
+    triangle_count: int
+    edge_count: int
+    bounds: DisplayMeshBounds | None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshDocument:
+        bounds = value.get("bounds")
+        return cls(
+            source=SourceInfo.from_dict(value["source"]),
+            envelope=Envelope(value["envelope"]),
+            document_kind=DocumentKind(value["document_kind"]),
+            internal_version=_optional_int(value.get("internal_version")),
+            length_unit=str(value["length_unit"]),
+            streams=tuple(
+                DisplayMeshStream.from_dict(item) for item in value.get("streams", [])
+            ),
+            parts=tuple(
+                DisplayMeshPart.from_dict(item) for item in value.get("parts", [])
+            ),
+            vertex_count=int(value["vertex_count"]),
+            triangle_count=int(value["triangle_count"]),
+            edge_count=int(value["edge_count"]),
+            bounds=None if bounds is None else DisplayMeshBounds.from_dict(bounds),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source.to_dict(),
+            "envelope": self.envelope.value,
+            "document_kind": self.document_kind.value,
+            "internal_version": self.internal_version,
+            "length_unit": self.length_unit,
+            "streams": [item.to_dict() for item in self.streams],
+            "parts": [item.to_dict() for item in self.parts],
+            "vertex_count": self.vertex_count,
+            "triangle_count": self.triangle_count,
+            "edge_count": self.edge_count,
+            "bounds": None if self.bounds is None else self.bounds.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayMeshResult:
+    """Saved display meshes plus packed little-endian buffers.
+
+    ``positions`` and ``normals`` hold three ``float32`` values per vertex
+    (positions in millimetres). ``indices`` holds three ``uint32`` vertex
+    indices per triangle and ``edges`` two per face-outline segment. The
+    buffers are not part of ``to_dict()``.
+    """
+
+    status: DisplayMeshStatus
+    mesh: DisplayMeshDocument | None
+    diagnostics: tuple[Diagnostic, ...]
+    positions: bytes = b""
+    normals: bytes = b""
+    indices: bytes = b""
+    edges: bytes = b""
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        positions: bytes = b"",
+        normals: bytes = b"",
+        indices: bytes = b"",
+        edges: bytes = b"",
+    ) -> DisplayMeshResult:
+        mesh = value.get("mesh")
+        return cls(
+            status=DisplayMeshStatus(value["status"]),
+            mesh=None if mesh is None else DisplayMeshDocument.from_dict(mesh),
+            diagnostics=tuple(
+                Diagnostic.from_dict(item) for item in value.get("diagnostics", [])
+            ),
+            positions=bytes(positions),
+            normals=bytes(normals),
+            indices=bytes(indices),
+            edges=bytes(edges),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "mesh": None if self.mesh is None else self.mesh.to_dict(),
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class GeometryEvaluationOptions:
     chord_tolerance_mm: float = 0.01

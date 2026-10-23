@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .model import (
+        DisplayMeshResult,
         DrawingStructureResult,
         GeometryEvaluationResult,
         GeometryResult,
@@ -58,5 +59,18 @@ class GeometryEvaluationError(SldkitError):
         codes = ", ".join(item.code for item in result.diagnostics) or "none"
         message = (
             f"strict geometry evaluation rejected status={result.status.value}; {codes}"
+        )
+        super().__init__(message)
+
+
+class DisplayMeshError(SldkitError):
+    """Raised by strict display-mesh decoding while retaining the structured result."""
+
+    def __init__(self, result: DisplayMeshResult) -> None:
+        self.result = result
+        codes = ", ".join(item.code for item in result.diagnostics) or "none"
+        message = (
+            f"strict display-mesh decoding rejected status={result.status.value}; "
+            f"{codes}"
         )
         super().__init__(message)

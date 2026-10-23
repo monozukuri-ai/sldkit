@@ -24,8 +24,8 @@ records are distributed.
 
 The following tools are for repository checkouts and are not included in the
 source distribution: `validate_container_corpus.py`, `validate_semantic_corpus.py`,
-`validate_geometry_corpus.py`, `validate_project_graph.py`, and
-`verify_corpus_source.py`. They exercise corpus contracts, Rust/Python parity,
+`validate_geometry_corpus.py`, `validate_project_graph.py`,
+`validate_display_oracle.py`, and `verify_corpus_source.py`. They exercise corpus contracts, Rust/Python parity,
 or checkout provenance and may require the Rust CLI or corpus manifest.
 
 When adding a reusable tool, document its inputs and dependencies here, choose

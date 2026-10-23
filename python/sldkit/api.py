@@ -8,6 +8,7 @@ from typing import Any
 
 from . import _core
 from .errors import (
+    DisplayMeshError,
     DrawingStructureError,
     GeometryError,
     GeometryEvaluationError,
@@ -17,6 +18,8 @@ from .model import (
     BillOfMaterials,
     BinaryResource,
     BomOptions,
+    DisplayMeshResult,
+    DisplayMeshStatus,
     DrawingStructureResult,
     DrawingStructureStatus,
     ExtractionMode,
@@ -211,6 +214,55 @@ def decode_geometry_file(
         )
     )
     return _apply_geometry_strict(GeometryResult.from_dict(payload), strict)
+
+
+def decode_display_mesh_bytes(
+    data: BytesLike,
+    *,
+    filename: str | None = None,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+) -> DisplayMeshResult:
+    """Decode saved display meshes without running the B-Rep decoder.
+
+    The result carries packed little-endian buffers beside its JSON contract;
+    see ``DisplayMeshResult``.
+    """
+    payload, positions, normals, indices, edges = _core.decode_display_mesh_bytes(
+        bytes(data), filename, _profile_name(profile)
+    )
+    return _apply_display_strict(
+        DisplayMeshResult.from_dict(
+            _load_json(payload),
+            positions=positions,
+            normals=normals,
+            indices=indices,
+            edges=edges,
+        ),
+        strict,
+    )
+
+
+def decode_display_mesh_file(
+    path: PathType,
+    *,
+    profile: str | LimitProfile = LimitProfile.DESKTOP,
+    strict: bool = False,
+) -> DisplayMeshResult:
+    """Decode a file's saved display meshes without running the B-Rep decoder."""
+    payload, positions, normals, indices, edges = _core.decode_display_mesh_file(
+        os.fsdecode(os.fspath(path)), _profile_name(profile)
+    )
+    return _apply_display_strict(
+        DisplayMeshResult.from_dict(
+            _load_json(payload),
+            positions=positions,
+            normals=normals,
+            indices=indices,
+            edges=edges,
+        ),
+        strict,
+    )
 
 
 def evaluate_geometry_bytes(
@@ -454,6 +506,12 @@ def _apply_strict(result: ParseResult, strict: bool) -> ParseResult:
 def _apply_geometry_strict(result: GeometryResult, strict: bool) -> GeometryResult:
     if strict and result.status is not GeometryStatus.DECODED:
         raise GeometryError(result)
+    return result
+
+
+def _apply_display_strict(result: DisplayMeshResult, strict: bool) -> DisplayMeshResult:
+    if strict and result.status is not DisplayMeshStatus.DECODED:
+        raise DisplayMeshError(result)
     return result
 
 

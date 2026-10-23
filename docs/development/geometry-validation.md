@@ -29,6 +29,36 @@ closed; an export can therefore have different body kinds from the native
 document. Volume and volume-weighted center of mass include explicit solids
 only, while surface area includes sheets. Capture metadata records this scope.
 
+## Display-outline oracle
+
+Every saved modern Part carries its own witness: the `DisplayLists` face
+tables are SolidWorks' tessellation of the final faces. Their welded outlines
+are the face boundaries, so `scripts/validate_display_oracle.py` compares the
+decoded B-Rep against them without a geometry kernel or a SolidWorks capture:
+
+```sh
+python scripts/validate_display_oracle.py --profile service part.SLDPRT ...
+```
+
+For each Part it reports `edge_on_display` (sampled B-Rep edge points on a
+display outline) and `outline_covered` (display outline points on a sampled
+B-Rep edge) within a tolerance of 0.2% of the display diagonal, at least three
+chord tolerances. `match` requires both fractions to reach 0.98. A low
+`outline_covered` with a high `edge_on_display` means faces or edges are
+missing from the decoded state; the reverse means misplaced or wrong carriers.
+Derived seams are excluded. Agreement is necessary evidence of a complete
+partition, not a proof of exact trims or solid validity.
+
+### Importing upstream decoder changes
+
+The vendored decoder stays pinned at `0.5.3+sldkit.4`; it is not rebased onto
+upstream releases wholesale. An upstream change is imported as a new numbered
+patch in `vendor/cadmpeg-codec-sldprt/PATCHES.md` only when the display-outline
+oracle over the local corpus gains `match` or `outline_covered` without any
+Part losing either measure, and the existing tests still pass. Record the
+upstream revision, the files taken, and the before/after oracle summary in that
+patch entry. Saved display meshes do not use the vendored decoder.
+
 ## Numerical NURBS comparison
 
 `scripts/validate_nurbs_geometry.py` compares the native NURBS support carriers

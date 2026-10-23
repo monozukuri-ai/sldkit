@@ -31,7 +31,7 @@ def archive_license_fixture():
 
 
 def test_source_notices_and_dependency_catalog_are_current():
-    assert license_check.check() == "0.2.0"
+    assert license_check.check() == "0.3.0"
 
 
 def test_archive_accepts_complete_exact_notices():

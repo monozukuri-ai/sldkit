@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sldkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Source-faithful parsing foundations for SolidWorks files"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0 AND MIT AND Apache-2.0 AND BSD-3-Clause"

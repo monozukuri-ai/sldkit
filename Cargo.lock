@@ -675,7 +675,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "sldkit-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "serde",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-container"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cfb",
  "crc32fast",
@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cadmpeg-codec-sldprt",
  "cadmpeg-core",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "sldkit-python"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pyo3",
  "serde",

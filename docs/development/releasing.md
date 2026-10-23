@@ -20,7 +20,7 @@ python scripts/sync_license_notices.py --refresh-rust
 npm ci --prefix viewer
 npm run build --prefix viewer
 python scripts/check_license.py
-python scripts/verify_release_version.py --tag v0.2.0
+python scripts/verify_release_version.py --tag v0.3.0
 ```
 
 For a legal-text change without dependency changes, omit `--refresh-rust`.

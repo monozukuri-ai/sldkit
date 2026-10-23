@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sldkit"
-version = "0.3.0"
+dynamic = ["version"]
 description = "Source-faithful parsing foundations for SolidWorks files"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0 AND MIT AND Apache-2.0 AND BSD-3-Clause"
@@ -63,6 +63,7 @@ include = [
     { path = "scripts/validate_geometry_oracle.py", format = "sdist" },
     { path = "scripts/test_assembly_capture.ps1", format = "sdist" },
     { path = "scripts/check_license.py", format = "sdist" },
+    { path = "scripts/bump_version.py", format = "sdist" },
     { path = "scripts/sync_license_notices.py", format = "sdist" },
     { path = "scripts/verify_release_artifacts.py", format = "sdist" },
     { path = "scripts/verify_release_version.py", format = "sdist" },
@@ -114,6 +115,18 @@ exclude = [
     "corpus/**",
     "designs/**",
     "viewer/node_modules/**",
+]
+
+[tool.uv]
+# Cargo owns the dynamic package version; changes must invalidate uv's metadata.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "crates/**/Cargo.toml" },
+    { file = "crates/**/*.rs" },
+    { file = "vendor/**/Cargo.toml" },
+    { file = "vendor/**/*.rs" },
 ]
 
 [tool.pytest.ini_options]

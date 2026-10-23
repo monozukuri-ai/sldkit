@@ -1,3 +1,5 @@
+from importlib.metadata import version as _distribution_version
+
 from .api import (
     build_bom,
     decode_display_mesh_bytes,
@@ -189,7 +191,7 @@ from .model import (
     ValueOrigin,
 )
 
-__version__ = "0.3.0"
+__version__ = _distribution_version("sldkit")
 
 __all__ = [
     "AssemblyComponent",

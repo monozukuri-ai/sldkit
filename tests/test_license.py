@@ -18,9 +18,7 @@ license_check = SimpleNamespace(
 def archive_license_fixture():
     meta = Message()
     meta["Name"] = "sldkit"
-    meta["Version"] = license_check.read_toml(ROOT / "pyproject.toml")["project"][
-        "version"
-    ]
+    meta["Version"] = license_check.python_version(license_check.source_version(ROOT))
     meta["License-Expression"] = license_check.DISTRIBUTION_LICENSE
     prefix = "sldkit.dist-info/licenses/"
     contents = {}
@@ -31,7 +29,9 @@ def archive_license_fixture():
 
 
 def test_source_notices_and_dependency_catalog_are_current():
-    assert license_check.check() == "0.3.0"
+    assert license_check.check() == license_check.python_version(
+        license_check.source_version(ROOT)
+    )
 
 
 def test_archive_accepts_complete_exact_notices():
@@ -48,6 +48,7 @@ def test_archive_accepts_complete_exact_notices():
         "duplicate",
         "expression",
         "old_classifier",
+        "wrong_version",
     ],
 )
 def test_archive_rejects_incomplete_or_misleading_license_metadata(damage):
@@ -63,6 +64,8 @@ def test_archive_rejects_incomplete_or_misleading_license_metadata(damage):
         meta["License-File"] = "LICENSE"
     elif damage == "expression":
         meta.replace_header("License-Expression", "MIT")
+    elif damage == "wrong_version":
+        meta.replace_header("Version", meta["Version"] + ".post1")
     else:
         meta["Classifier"] = "License :: OSI Approved :: MIT License"
     with pytest.raises(ValueError):

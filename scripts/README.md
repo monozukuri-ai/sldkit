@@ -7,6 +7,7 @@ an extracted source distribution. See the
 
 | Tools | Purpose | Environment |
 |---|---|---|
+| `bump_version.py` | Update the shared Cargo version and synchronize lockfiles; `--check` verifies without changes | Python 3.11+, Cargo and uv; run from a full checkout |
 | `check_license.py`, `sync_license_notices.py`, `verify_release_version.py`, `verify_release_artifacts.py` | License notices, version consistency, and distribution contents | Python 3.11+; notice refresh also needs the locked Cargo sources |
 | `smoke_wheel_artifact.py`, `smoke_installed_package.py` | Install one wheel into an isolated venv and exercise the installed package | Python with `venv` and `ensurepip`; see the release guide |
 | `capture_part_orientation.swb` | Observe a saved active Part's body/face/coedge facts | Interactive SolidWorks |

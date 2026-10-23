@@ -6,6 +6,38 @@ the published `parasolid-core 0.3.2` crate without a local source patch.
 Keep previously published MIT and third-party permissions intact. Use a new
 version for corrections; do not replace existing public artifacts with different terms.
 
+## Change the version
+
+`Cargo.toml`'s `[workspace.package].version` is the single version definition.
+Rust crates inherit it, Maturin derives Python package metadata from it, and
+`sldkit.__version__` reads the installed distribution metadata. The private
+Viewer asset build does not have a separate package version.
+
+From a full checkout, use Python 3.11+, Cargo and uv:
+
+```bash
+python scripts/bump_version.py 0.4.0
+python scripts/bump_version.py --check
+uv sync --locked --inexact
+```
+
+Replace `0.4.0` with the intended version. The command updates `Cargo.toml`,
+refreshes the main and fuzz Cargo lockfiles plus `uv.lock`, and checks consistency.
+It restores those files, including any pre-existing edits, if an update fails.
+Use `--offline` when dependencies are already cached. If you have already edited
+the Cargo version, omit the version argument to synchronize the lockfiles.
+The vendor workspace has its own upstream version and is unaffected.
+Run `uv sync --locked --inexact` afterwards to rebuild your installed development
+package while keeping optional validation dependencies already in the environment.
+
+Supported versions are `X.Y.Z`, `X.Y.Z-rc.N` and `X.Y.Z-devN`; Python metadata
+uses `X.Y.ZrcN` and `X.Y.Z.devN` for the latter two. Tags always use Cargo's
+spelling, for example `v0.4.0-rc.1`. Before tagging, run
+`python scripts/bump_version.py --check --tag vYOUR_VERSION` with the actual tag.
+CI checks inherited/dynamic metadata, the private Viewer manifest and lockfiles
+before building. Version-only changes do not require regenerating license notices
+or Viewer assets.
+
 ## Source and notice updates
 
 Use Python 3.11+ for the release-check scripts. After changing dependencies,
@@ -20,7 +52,7 @@ python scripts/sync_license_notices.py --refresh-rust
 npm ci --prefix viewer
 npm run build --prefix viewer
 python scripts/check_license.py
-python scripts/verify_release_version.py --tag v0.3.0
+python scripts/bump_version.py --check
 ```
 
 For a legal-text change without dependency changes, omit `--refresh-rust`.

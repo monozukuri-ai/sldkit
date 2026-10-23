@@ -52,6 +52,7 @@ SDIST_DOCS = frozenset(
 SDIST_SCRIPTS = frozenset(
     (
         "scripts/README.md",
+        "scripts/bump_version.py",
         "scripts/capture_assembly_transforms.ps1",
         "scripts/capture_drawing_ground_truth.ps1",
         "scripts/capture_part_orientation.swb",

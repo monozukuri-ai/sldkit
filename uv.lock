@@ -435,7 +435,6 @@ wheels = [
 
 [[package]]
 name = "sldkit"
-version = "0.3.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

@@ -6,6 +6,7 @@ import json
 import struct
 import zipfile
 import zlib
+from importlib.metadata import version
 
 import pytest
 import sldkit
@@ -13,6 +14,10 @@ from sldkit import _core
 
 OLE2_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
 MODERN_MARKER = bytes.fromhex("140006000800")
+
+
+def test_version_matches_installed_metadata():
+    assert sldkit.__version__ == version("sldkit")
 
 
 def modern_file(payload: bytes = b"payload", name: str = "Contents/Test") -> bytes:

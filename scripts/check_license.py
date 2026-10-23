@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import Callable
 from email.message import Message
 from pathlib import Path
 
 import tomllib
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from verify_release_version import python_version, source_version  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_LICENSE = "PolyForm-Noncommercial-1.0.0 AND MIT"
@@ -100,8 +104,8 @@ def check_archive_licenses(
     read: Callable[[str], bytes], metadata: Message, prefix: str, root: Path = ROOT
 ) -> None:
     """Require declared paths and bytes, rather than permissive suffix matches."""
-    project = read_toml(root / "pyproject.toml")["project"]
-    if metadata["Name"] != "sldkit" or metadata["Version"] != project["version"]:
+    version = python_version(source_version(root))
+    if metadata["Name"] != "sldkit" or metadata["Version"] != version:
         raise ValueError("Unexpected distribution identity/version")
     if metadata["License-Expression"] != DISTRIBUTION_LICENSE:
         raise ValueError("Unexpected License-Expression")
@@ -236,19 +240,14 @@ def check(root: Path = ROOT) -> str:
     viewer = json.loads((root / "viewer/package.json").read_bytes())
     npm_lock = json.loads((root / "viewer/package-lock.json").read_bytes())
     for package in (viewer, npm_lock["packages"][""]):
-        if (
-            package["license"] != PROJECT_LICENSE
-            or package["version"] != project["version"]
-        ):
-            raise ValueError("Unexpected viewer license/version")
-    if npm_lock["version"] != project["version"]:
-        raise ValueError("Stale npm lock version")
+        if package["license"] != PROJECT_LICENSE:
+            raise ValueError("Unexpected viewer license")
     if (root / "viewer/LICENSE.txt").read_bytes() != notice_bundle(root, viewer=True):
         raise ValueError("Stale viewer source notice")
     assets = root / "python/sldkit/viewer/_assets"
     check_viewer_assets(lambda p: (assets / p).read_bytes(), root)
     check_catalog(root)
-    return project["version"]
+    return python_version(source_version(root))
 
 
 if __name__ == "__main__":

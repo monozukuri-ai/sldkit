@@ -105,16 +105,154 @@ def test_wheel_smoke_requires_exactly_one_wheel(tmp_path: Path):
 
 def test_release_versions_and_tag_match():
     namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
-    versions = namespace["release_versions"](ROOT)
-    version = namespace["verify_release_version"](
-        ROOT, f"v{next(iter(versions.values()))}"
-    )
+    version = namespace["source_version"](ROOT)
 
-    assert set(versions.values()) == {version}
+    assert namespace["verify_release_version"](ROOT, f"v{version}") == version
 
 
 def test_release_tag_must_match_source_version():
     namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
 
     with pytest.raises(ValueError, match="does not match"):
-        namespace["verify_release_version"](ROOT, "v999.0.0")
+        namespace["verify_release_version"](
+            ROOT, f"v{namespace['source_version'](ROOT)}-mismatch"
+        )
+
+
+@pytest.fixture
+def version_checkout(tmp_path):
+    import shutil
+
+    paths = [
+        "Cargo.toml",
+        "Cargo.lock",
+        "pyproject.toml",
+        "uv.lock",
+        "fuzz/Cargo.toml",
+        "fuzz/Cargo.lock",
+        "viewer/package.json",
+        "viewer/package-lock.json",
+    ]
+    paths.extend(str(p.relative_to(ROOT)) for p in ROOT.glob("crates/*/Cargo.toml"))
+    for relative in paths:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, destination)
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("cargo", "python"),
+    [("1.2.3", "1.2.3"), ("1.2.3-rc.1", "1.2.3rc1"), ("1.2.3-dev0", "1.2.3.dev0")],
+)
+def test_python_release_version_spelling(cargo, python):
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
+    assert namespace["python_version"](cargo) == python
+
+
+@pytest.mark.parametrize(
+    "version", ["v1.2.3", "1.2", "01.2.3", "1.2.3-rc.01", "1.2.3+local"]
+)
+def test_invalid_bump_leaves_files_untouched(version_checkout, version, monkeypatch):
+    namespace = runpy.run_path(str(ROOT / "scripts/bump_version.py"))
+    before = {p: p.read_bytes() for p in version_checkout.rglob("*") if p.is_file()}
+
+    def unexpected_command(*args, **kwargs):
+        pytest.fail("invalid version must be rejected before running tools")
+
+    monkeypatch.setattr(namespace["subprocess"], "run", unexpected_command)
+    with pytest.raises(ValueError, match="unsupported release version"):
+        namespace["bump_version"](version, version_checkout)
+    assert {p: p.read_bytes() for p in before} == before
+
+
+@pytest.mark.parametrize("filename", ["Cargo.lock", "fuzz/Cargo.lock"])
+@pytest.mark.parametrize("damage", ["stale", "missing"])
+def test_release_rejects_stale_or_missing_local_lock(
+    version_checkout, filename, damage
+):
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
+    path = version_checkout / filename
+    blocks = path.read_text().split("[[package]]")
+    for index, block in enumerate(blocks):
+        if '\nname = "sldkit-core"\n' in block:
+            current = namespace["source_version"](version_checkout)
+            blocks[index] = (
+                block.replace(f'version = "{current}"', f'version = "{current}-stale"')
+                if damage == "stale"
+                else block.replace('name = "sldkit-core"', 'name = "missing"')
+            )
+            break
+    else:
+        pytest.fail("fixture must contain the workspace crate")
+    path.write_text("[[package]]".join(blocks))
+    with pytest.raises(ValueError, match=f"{filename}: stale or missing sldkit-core"):
+        namespace["verify_release_version"](version_checkout)
+
+
+@pytest.mark.parametrize("damage", ["python", "crate", "uv", "viewer", "npm_lock"])
+def test_release_rejects_duplicate_version_sources(version_checkout, damage):
+    import json
+
+    namespace = runpy.run_path(str(ROOT / "scripts/verify_release_version.py"))
+    version = namespace["source_version"](version_checkout)
+    if damage == "python":
+        path = version_checkout / "pyproject.toml"
+        path.write_text(
+            path.read_text().replace('dynamic = ["version"]', f'version = "{version}"')
+        )
+    elif damage == "crate":
+        path = version_checkout / "crates/sldkit-core/Cargo.toml"
+        path.write_text(
+            path.read_text().replace(
+                "version.workspace = true", f'version = "{version}"'
+            )
+        )
+    elif damage == "uv":
+        path = version_checkout / "uv.lock"
+        path.write_text(
+            path.read_text().replace(
+                'name = "sldkit"\n', f'name = "sldkit"\nversion = "{version}"\n'
+            )
+        )
+    else:
+        path = version_checkout / (
+            "viewer/package.json" if damage == "viewer" else "viewer/package-lock.json"
+        )
+        value = json.loads(path.read_text())
+        value["version"] = version
+        path.write_text(json.dumps(value))
+    with pytest.raises(ValueError):
+        namespace["verify_release_version"](version_checkout)
+
+
+@pytest.mark.parametrize("failed_step", [1, 2, 3, 4])
+def test_failed_bump_restores_existing_edits(
+    version_checkout, monkeypatch, failed_step
+):
+    import subprocess
+
+    namespace = runpy.run_path(str(ROOT / "scripts/bump_version.py"))
+    manifest = version_checkout / "Cargo.toml"
+    manifest.write_text(manifest.read_text() + "\n# unrelated local edit\n")
+    before = {
+        name: (version_checkout / name).read_bytes()
+        for name in namespace["MANAGED_FILES"]
+    }
+    calls = []
+
+    def run(command, *, cwd, check):
+        assert cwd == version_checkout and check
+        assert "--offline" in command
+        calls.append(command)
+        # Simulate partially written lockfiles, including a failure after all tools.
+        for name in namespace["MANAGED_FILES"][1:]:
+            (cwd / name).write_text("incomplete update\n")
+        if len(calls) == failed_step:
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(namespace["subprocess"], "run", run)
+    with pytest.raises((subprocess.CalledProcessError, ValueError)):
+        namespace["bump_version"]("9.8.7", version_checkout, offline=True)
+    assert len(calls) == min(failed_step, 3)
+    assert {name: (version_checkout / name).read_bytes() for name in before} == before

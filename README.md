@@ -210,6 +210,10 @@ uv run --frozen python scripts/verify_release_artifacts.py dist
 uv run --frozen python scripts/smoke_wheel_artifact.py dist
 ```
 
+To change the release version, run `python scripts/bump_version.py X.Y.Z`.
+The command updates the shared Cargo version and lockfiles; see the
+[release guide](docs/development/releasing.md#change-the-version).
+
 ## License
 
 Starting with 0.2.0, new material is source-available under PolyForm Noncommercial

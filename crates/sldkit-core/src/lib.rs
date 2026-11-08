@@ -19,7 +19,7 @@ pub use bom::{
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSeverity};
 pub use display::{
     DisplayColorSource, DisplayMeshBounds, DisplayMeshBuffers, DisplayMeshDocument,
-    DisplayMeshPart, DisplayMeshResult, DisplayMeshStatus, DisplayMeshStream,
+    DisplayMeshInstance, DisplayMeshPart, DisplayMeshResult, DisplayMeshStatus, DisplayMeshStream,
     DisplaySurfaceReference,
 };
 pub use drawing::{

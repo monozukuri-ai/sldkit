@@ -14,7 +14,7 @@ as a typed Python package through PyO3.
 | Modern metadata, properties, configurations, and references | Partial, source-faithful profile |
 | Typed component flags, unit settings, material labels, feature records, sheet facts, embedded virtual components | Source tokens plus labelled inferences |
 | Modern `.SLDPRT` B-Rep and tessellation | Explicit partial profile with provenance and loss records |
-| Saved display meshes | Packed `DisplayLists` meshes, colors, and face outlines for Parts, Assemblies, and `__ZLB` OLE2 Parts without B-Rep decoding |
+| Saved display meshes | Packed `DisplayLists` meshes, colors, and face outlines for Parts, Assemblies, and `__ZLB` OLE2 Parts, plus the `FaceTessellations` sections and occurrence list of SOLIDWORKS 2023 and later Assemblies, without B-Rep decoding |
 | Modern `.SLDDRW` source structure | Exact XML record inventory plus unframed Drawing carrier candidates; no render semantics |
 | Kernel-free geometry evaluation | Sampled edge polylines, bounds, edge smoothness, and mesh quantities with explicit withheld states |
 | Directory project graph | Bounded and deterministic for decoded references, including embedded virtual components |

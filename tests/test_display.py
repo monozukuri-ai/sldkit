@@ -197,6 +197,112 @@ def test_assembly_display_tables_are_returned_with_placement_note():
     assert "display.assembly_placement_unverified" in codes
 
 
+PLATE_ID = bytes.fromhex("8fea5b1444e29701")
+PLATE_REPEAT_ID = bytes.fromhex("0519d1368b6f0417")
+BOLT_ID = bytes.fromhex("3abcdc0f752f7b0a")
+NO_SECTION = 0xFFFFFFFF
+
+
+def directory_record(
+    path: str, reference: bytes, ident: bytes, stream: str, section: int, bodies: int
+) -> bytes:
+    out = utf16(path) + struct.pack("<I", 1234) + bytes(8) + reference + ident
+    out += utf16(stream) + struct.pack("<II", section, bodies)
+    for body in range(bodies):
+        out += struct.pack("<III", 101 + body, 80, 6)
+    return out
+
+
+def face_directory() -> bytes:
+    """Owner, repeat and nested owner; the sub-assembly node takes tree index 3."""
+    records = [
+        (1, directory_record("Plate-1@Asm", bytes(8), PLATE_ID, "000-000-001", 0, 1)),
+        (2, directory_record("Plate-2@Asm", PLATE_ID, PLATE_REPEAT_ID, "", NO_SECTION, 1)),
+        (4, directory_record("Sub-1@Asm/Bolt-1@Sub", bytes(8), BOLT_ID, "000-000-001", 1, 1)),
+    ]
+    out = struct.pack("<4I", 2, 1, len(records), records[0][0])
+    for index, (tree_index, record) in enumerate(records):
+        if index:
+            out += struct.pack("<I", tree_index)
+        out += record
+    return out
+
+
+def face_trailer(reference: str) -> bytes:
+    return bytes(8) + struct.pack("<I", 1) + bytes(80) + utf16(reference)
+
+
+def face_stream() -> bytes:
+    return b"".join(
+        (
+            struct.pack("<I", 0),
+            PLATE_ID,
+            struct.pack("<I", 2),
+            struct.pack("<2I", 2, 1),
+            table(QUAD),
+            face_trailer("moSimpleSurfIdRep_c,7,1, "),
+            struct.pack("<2I", 1, 1),
+            table(TRIANGLE, normals=False),
+            face_trailer("moEndFace3IntSurfIdRep_c,9,0,0,0, "),
+            struct.pack("<I", 99),
+            struct.pack("<I", 1),
+            BOLT_ID,
+            struct.pack("<I", 1),
+            struct.pack("<2I", 1, 1),
+            table(TRIANGLE),
+            face_trailer("moSimpleSurfIdRep_c,3,2, "),
+            struct.pack("<I", 5),
+        )
+    )
+
+
+def test_face_tessellations_assembly_lists_instances():
+    payload = (
+        document("ASSEMBLY")
+        + modern_frame("Contents/DisplayLists", b"environment only " * 4)
+        + modern_frame("FaceTessellations/Directory", face_directory())
+        + modern_frame("FaceTessellations/000-000-001", face_stream())
+    )
+    result = sldkit.decode_display_mesh_bytes(payload, filename="asm.SLDASM")
+    native, *_ = _core.decode_display_mesh_bytes(payload, "asm.SLDASM", "desktop")
+    assert result.to_dict() == json.loads(native)
+    assert result.status is sldkit.DisplayMeshStatus.DECODED
+    mesh = result.mesh
+    assert mesh is not None
+    assert [stream.stream_path for stream in mesh.streams] == [
+        "Contents/DisplayLists",
+        "FaceTessellations/000-000-001",
+    ]
+    assert [stream.part_count for stream in mesh.streams] == [0, 3]
+    assert mesh.triangle_count == 4
+    assert [(part.stream_index, part.instance_index) for part in mesh.parts] == [
+        (1, 0),
+        (1, 0),
+        (1, 2),
+    ]
+    assert mesh.parts[1].normals_derived
+    plate, repeat, bolt = mesh.instances
+    assert isinstance(plate, sldkit.DisplayMeshInstance)
+    assert (plate.name, plate.number, plate.tables_from) == ("Plate", 1, 0)
+    assert (plate.stream_index, plate.section_index) == (1, 0)
+    assert (plate.declared_face_count, plate.face_count, plate.body_count) == (2, 2, 1)
+    assert (repeat.path, repeat.tables_from, repeat.stream_index) == (
+        "Plate-2@Asm",
+        0,
+        None,
+    )
+    assert (bolt.path, bolt.tree_index, bolt.tables_from) == (
+        "Sub-1@Asm/Bolt-1@Sub",
+        4,
+        2,
+    )
+    codes = {item.code for item in result.diagnostics}
+    assert "display.face_tessellations_directory" in codes
+    assert "display.assembly_placement_unverified" in codes
+    assert "display.stream_unreadable" not in codes
+    assert floats(result.positions)[:6] == pytest.approx([0, 0, 0, 1, 0, 0])
+
+
 def test_drawing_documents_are_unsupported():
     payload = document("DRAWING") + modern_frame(
         "Contents/DisplayLists", display_lists()

@@ -6,6 +6,7 @@
 //! B-Rep failures, byte-ledger findings, and B-Rep cost do not affect it.
 
 mod appearance;
+mod face_tessellations;
 mod tables;
 
 use std::collections::{BTreeSet, HashMap};
@@ -257,6 +258,7 @@ impl Packer {
         table_index: u32,
         face: &tables::Face,
         appearance: Option<&appearance::Appearance>,
+        instance_index: Option<u32>,
     ) -> bool {
         let table = &face.table;
         let Some(triangles) = table.triangles() else {
@@ -329,6 +331,7 @@ impl Packer {
                     local_surface_id: reference.local_surface_id,
                 })
                 .collect(),
+            instance_index,
         });
         true
     }
@@ -406,9 +409,30 @@ pub(crate) fn decode(
                 && entry.path.as_deref().is_some_and(is_visual_states_path)
         })
         .collect::<Vec<_>>();
+    let mut face_entries = inventory
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.state == InventoryEntryState::Decoded
+                && entry
+                    .path
+                    .as_deref()
+                    .is_some_and(face_tessellations::is_stream_path)
+        })
+        .collect::<Vec<_>>();
+    face_entries.sort_by(|left, right| left.path.cmp(&right.path));
+    let directory_entry = inventory.entries.iter().find(|entry| {
+        entry.state == InventoryEntryState::Decoded
+            && entry
+                .path
+                .as_deref()
+                .is_some_and(face_tessellations::is_directory_path)
+    });
     let wanted = display_entries
         .iter()
         .chain(visual_entries.iter())
+        .chain(face_entries.iter())
+        .chain(directory_entry.iter())
         .map(|entry| entry.id.clone())
         .collect::<BTreeSet<_>>();
     let decoded = decode_selected_bytes(data, &wanted, limits).streams;
@@ -450,10 +474,30 @@ pub(crate) fn decode(
         }
         let appearances = appearance::resolve(payload, &classes, &faces, &feature_colors);
         for ((face, appearance), table_index) in faces.iter().zip(&appearances).zip(0u32..) {
-            if !packer.push(stream_index, table_index, face, appearance.as_ref()) {
+            if !packer.push(stream_index, table_index, face, appearance.as_ref(), None) {
                 break 'streams;
             }
         }
+    }
+    let display_streams_with_parts = streams
+        .iter()
+        .filter(|stream| stream.part_count > 0)
+        .count();
+    let face = if face_entries.is_empty() || packer.budget_exceeded {
+        face_tessellations::Outcome::default()
+    } else {
+        face_tessellations::decode(
+            &face_entries,
+            directory_entry.and_then(|entry| decoded.get(&entry.id).map(Vec::as_slice)),
+            &decoded,
+            &mut packer,
+            &mut streams,
+            &mut diagnostics,
+        )
+    };
+    if face.parts > 0 {
+        // The environment stream of a FaceTessellations assembly holds no tables.
+        unreadable.retain(|path| !is_display_path(path));
     }
 
     for path in &unreadable {
@@ -472,11 +516,7 @@ pub(crate) fn decode(
             .with_detail("stream_path", path.clone()),
         );
     }
-    let streams_with_parts = streams
-        .iter()
-        .filter(|stream| stream.part_count > 0)
-        .count();
-    if streams_with_parts > 1 {
+    if display_streams_with_parts > 1 {
         diagnostics.push(
             diagnostic(
                 "display.multiple_streams",
@@ -484,7 +524,7 @@ pub(crate) fn decode(
                 DiagnosticKind::Unresolved,
                 "several display streams hold meshes; all are returned and configuration ownership is unresolved",
             )
-            .with_detail("streams", streams_with_parts.to_string()),
+            .with_detail("streams", display_streams_with_parts.to_string()),
         );
     }
     if packer.budget_exceeded {
@@ -520,11 +560,15 @@ pub(crate) fn decode(
                 "display.no_display_data",
                 DiagnosticSeverity::Warning,
                 DiagnosticKind::Unsupported,
-                "the document holds no non-empty DisplayLists stream",
+                "the document holds no non-empty DisplayLists or FaceTessellations stream",
             ));
         }
         DisplayMeshStatus::Unsupported
-    } else if !unreadable.is_empty() || streams_with_parts > 1 || packer.budget_exceeded {
+    } else if !unreadable.is_empty()
+        || display_streams_with_parts > 1
+        || packer.budget_exceeded
+        || face.incomplete
+    {
         DisplayMeshStatus::Partial
     } else {
         DisplayMeshStatus::Decoded
@@ -551,6 +595,7 @@ pub(crate) fn decode(
                 length_unit: "millimeter".to_owned(),
                 streams,
                 parts: packer.parts,
+                instances: face.instances,
                 vertex_count,
                 triangle_count,
                 edge_count,

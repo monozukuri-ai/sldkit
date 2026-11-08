@@ -66,6 +66,45 @@ pub struct DisplayMeshPart {
     pub appearance_name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surface_references: Vec<DisplaySurfaceReference>,
+    /// Index into [`DisplayMeshDocument::instances`] of the occurrence that
+    /// owns this table. `FaceTessellations` sections only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_index: Option<u32>,
+}
+
+/// One component occurrence listed by an assembly's `FaceTessellations/Directory`.
+///
+/// SOLIDWORKS 2023 and later assemblies save the display tables of each
+/// referenced part once, in a section of a `FaceTessellations/<stream>`
+/// entry, and list every occurrence in the directory. An occurrence that
+/// repeats a part names the owner instead of a section. The tables stay in
+/// the referenced part's coordinates; placement is the caller's join with the
+/// component transforms.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DisplayMeshInstance {
+    /// Saved occurrence path, root first: `<name>-<n>@<assembly>`, or
+    /// `<sub>-<m>@<assembly>/<name>-<n>@<sub>` for a nested occurrence.
+    pub path: String,
+    /// `<name>` of the last path segment.
+    pub name: String,
+    /// `<n>` of the last path segment.
+    pub number: Option<u32>,
+    /// Position in the saved component tree. Sub-assembly nodes consume an
+    /// index without a record of their own.
+    pub tree_index: u32,
+    /// Index of the instance whose tables this occurrence displays: itself
+    /// when it owns a section, the owner when it repeats one, none when the
+    /// file saved no tables for it.
+    pub tables_from: Option<u32>,
+    /// Stream (index into [`DisplayMeshDocument::streams`]) and section
+    /// ordinal of the owned tables.
+    pub stream_index: Option<u32>,
+    pub section_index: Option<u32>,
+    /// Face count the section declares and the number of validated tables.
+    pub declared_face_count: Option<u32>,
+    pub face_count: u32,
+    /// Bodies the directory lists for the occurrence.
+    pub body_count: u32,
 }
 
 /// One decoded `DisplayLists` container entry.
@@ -99,6 +138,9 @@ pub struct DisplayMeshDocument {
     pub length_unit: String,
     pub streams: Vec<DisplayMeshStream>,
     pub parts: Vec<DisplayMeshPart>,
+    /// Component occurrences of a `FaceTessellations` assembly; empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<DisplayMeshInstance>,
     pub vertex_count: u64,
     pub triangle_count: u64,
     pub edge_count: u64,

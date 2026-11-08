@@ -18,8 +18,8 @@ const CHANNEL_HEADER_LEN: usize = 16;
 
 // Face header offsets after the class token. The extended form carries a
 // fixed 32-byte extension after the two counts.
-const COMPACT_HEADER_LEN: usize = 8;
-const EXTENDED_HEADER_LEN: usize = 40;
+pub(super) const COMPACT_HEADER_LEN: usize = 8;
+pub(super) const EXTENDED_HEADER_LEN: usize = 40;
 const HEADER_TRIANGLE_COUNT: usize = 0;
 const HEADER_STRIP_COUNT: usize = 4;
 const EXTENDED_FORM: usize = 8;
@@ -291,7 +291,7 @@ pub(super) fn parse_table(bytes: &[u8], at: usize) -> Option<(Table, usize)> {
 }
 
 /// Size of the face header that precedes the first descriptor.
-fn header_len(payload: &[u8], header: usize) -> usize {
+pub(super) fn header_len(payload: &[u8], header: usize) -> usize {
     let extended = u32_le_at(payload, header + EXTENDED_FORM) == Some(1)
         && u32_le_at(payload, header + EXTENDED_ZERO_AT_12) == Some(0)
         && u32_le_at(payload, header + EXTENDED_ZERO_AT_16) == Some(0)
@@ -306,7 +306,8 @@ fn header_len(payload: &[u8], header: usize) -> usize {
     }
 }
 
-fn header_agrees(payload: &[u8], header: usize, table: &Table) -> bool {
+/// Whether the face header at `header` states the table's triangle and strip counts.
+pub(super) fn header_agrees(payload: &[u8], header: usize, table: &Table) -> bool {
     let counts = (
         u32_le_at(payload, header + HEADER_TRIANGLE_COUNT).and_then(|v| usize::try_from(v).ok()),
         u32_le_at(payload, header + HEADER_STRIP_COUNT).and_then(|v| usize::try_from(v).ok()),
@@ -521,7 +522,11 @@ fn utf16_strings(payload: &[u8], start: usize, end: usize) -> Vec<(usize, usize,
 }
 
 /// `mo*SurfIdRep_c,<feature>,<local>,...` references in a face's metadata slot.
-fn surface_references(payload: &[u8], start: usize, end: usize) -> Vec<SurfaceReference> {
+pub(super) fn surface_references(
+    payload: &[u8],
+    start: usize,
+    end: usize,
+) -> Vec<SurfaceReference> {
     utf16_strings(payload, start, end)
         .into_iter()
         .filter_map(|(_, _, text)| {

@@ -3097,6 +3097,7 @@ class DisplayMeshPart:
     color_source: DisplayColorSource | None
     appearance_name: str | None
     surface_references: tuple[DisplaySurfaceReference, ...] = ()
+    instance_index: int | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshPart:
@@ -3121,6 +3122,7 @@ class DisplayMeshPart:
                 DisplaySurfaceReference.from_dict(item)
                 for item in value.get("surface_references", [])
             ),
+            instance_index=_optional_int(value.get("instance_index")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -3147,7 +3149,61 @@ class DisplayMeshPart:
             result["surface_references"] = [
                 item.to_dict() for item in self.surface_references
             ]
+        if self.instance_index is not None:
+            result["instance_index"] = self.instance_index
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayMeshInstance:
+    """One component occurrence listed by a ``FaceTessellations`` directory.
+
+    SOLIDWORKS 2023 and later assemblies save each referenced part's display
+    tables once and list every occurrence here. ``tables_from`` is the index
+    of the instance whose tables this occurrence displays (itself for an
+    owner, the owner for a repeat, ``None`` when nothing was saved). The
+    tables stay in the referenced part's coordinates.
+    """
+
+    path: str
+    name: str
+    number: int | None
+    tree_index: int
+    tables_from: int | None
+    stream_index: int | None
+    section_index: int | None
+    declared_face_count: int | None
+    face_count: int
+    body_count: int
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshInstance:
+        return cls(
+            path=str(value["path"]),
+            name=str(value["name"]),
+            number=_optional_int(value.get("number")),
+            tree_index=int(value["tree_index"]),
+            tables_from=_optional_int(value.get("tables_from")),
+            stream_index=_optional_int(value.get("stream_index")),
+            section_index=_optional_int(value.get("section_index")),
+            declared_face_count=_optional_int(value.get("declared_face_count")),
+            face_count=int(value["face_count"]),
+            body_count=int(value["body_count"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "name": self.name,
+            "number": self.number,
+            "tree_index": self.tree_index,
+            "tables_from": self.tables_from,
+            "stream_index": self.stream_index,
+            "section_index": self.section_index,
+            "declared_face_count": self.declared_face_count,
+            "face_count": self.face_count,
+            "body_count": self.body_count,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -3209,6 +3265,7 @@ class DisplayMeshDocument:
     triangle_count: int
     edge_count: int
     bounds: DisplayMeshBounds | None
+    instances: tuple[DisplayMeshInstance, ...] = ()
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> DisplayMeshDocument:
@@ -3229,10 +3286,14 @@ class DisplayMeshDocument:
             triangle_count=int(value["triangle_count"]),
             edge_count=int(value["edge_count"]),
             bounds=None if bounds is None else DisplayMeshBounds.from_dict(bounds),
+            instances=tuple(
+                DisplayMeshInstance.from_dict(item)
+                for item in value.get("instances", [])
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "source": self.source.to_dict(),
             "envelope": self.envelope.value,
             "document_kind": self.document_kind.value,
@@ -3245,6 +3306,9 @@ class DisplayMeshDocument:
             "edge_count": self.edge_count,
             "bounds": None if self.bounds is None else self.bounds.to_dict(),
         }
+        if self.instances:
+            result["instances"] = [item.to_dict() for item in self.instances]
+        return result
 
 
 @dataclass(frozen=True, slots=True)

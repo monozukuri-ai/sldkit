@@ -18,11 +18,20 @@ previously stayed in `raw_attributes`:
 | `component_id` | `swID` | Assembly-local identity used by display states |
 | `raw_transform` | `swTransform` | The sixteen exact decimal tokens in source order |
 
-`raw_transform` is retained only as evidence. Matrix layout, length unit,
-direction, and whether a nested occurrence is relative to its parent or the
-root remain unverified; see the
-[assembly validation guide](development/assembly-validation.md) for the capture
-workflow that must pass before a placement API is exposed.
+`raw_transform` is retained as evidence; sldkit exposes no placement API. On
+controlled files the sixteen tokens read as a row-major 4x4 matrix for row
+vectors in metres: tokens 0-11 are three rotation rows whose fourth token is
+`0`, tokens 12-14 are the translation of the component origin in the root
+assembly frame, and token 15 is `1`, so a point `v` of the referenced part is
+placed as `v * R + t`. That reading reproduces the vendor's STEP export of one
+assembly with 24 root-level occurrences and 14 distinct rotation blocks; the
+files, measures, and the rejected transposed reading are recorded under
+[observed evidence](development/assembly-validation.md#observed-evidence) in
+the assembly validation guide. It is an observation, not a documented
+contract. Whether a nested occurrence is relative to its parent or the root,
+flexible subassemblies, mirrored or scaled occurrences, and
+configuration-specific transforms remain unverified, and the capture workflow
+in that guide is still what must pass before a placement API is exposed.
 
 `Configuration.bounding_box` carries the saved `swBoundingBox` tokens of the
 configuration root model as `min` and `max` triples. The metre length unit is an

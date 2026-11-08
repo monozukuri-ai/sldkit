@@ -64,8 +64,8 @@ Indices address the shared vertex arrays. Each part records its
 | Input | Behavior |
 |---|---|
 | Modern Part (`Contents/DisplayLists`) | Meshes, colors, and outlines |
-| Modern Assembly | Meshes as stored; `display.assembly_placement_unverified` notes that component placement is not decoded |
-| OLE2 Part with `DisplayLists__ZLB` | Same table grammar after zlib decoding |
+| Modern Assembly | Meshes in component-local coordinates; `display.assembly_placement_unverified` notes that component placement is not decoded or applied |
+| OLE2 Part or Assembly with `DisplayLists__ZLB` | Same table grammar after zlib decoding. A stream above 1 MiB holds several zlib members behind one magic, each with its own size header (SOLIDWORKS 2011 and 2012 assemblies); all members are decoded |
 | OLE2 with `DisplayLists__Zip` | `display.stream_unreadable`; the older encoding is not decoded |
 | Drawing | `unsupported` with `display.document_kind_unsupported` |
 | No non-empty display stream | `unsupported` with `display.no_display_data` |
@@ -77,9 +77,33 @@ resolved), or the vertex budget stops packing
 (`display.vertex_budget_exceeded`). The budget is
 `max_total_uncompressed_bytes / 64` vertices under the selected limits.
 
-Assembly display tables are returned in their stored coordinates. In the
-observed files they show the placed assembly, but placement is not decoded or
-verified, so callers must not treat them as component occurrences.
+Assembly display tables are returned in their stored coordinates, and those
+coordinates are component-local: the faces of each instance are saved in the
+frame of the referenced part document, not where the assembly places them. In
+the manifold assembly recorded under
+[observed evidence](development/assembly-validation.md#observed-evidence) the
+stored tables span 46.5 x 89.7 x 210.0 mm with the four valve bodies
+overlapping at the origin, while the placed assembly measures
+356.8 x 168.0 x 138.5 mm. An earlier revision of this page described the
+stored tables as the placed assembly; that held only for a sample whose
+component transforms were small.
+
+The stream carries the join that placement needs. The `DisplayLists` stream of
+an Assembly starts with a `uoTempAssemblySHDData_c` declaration followed by an
+MFC string (`ff fe ff`, length, UTF-16LE) holding the assembly's own name, and
+the face tables of each instance are preceded by a `uoTempPartTessData_c`
+record that begins with the instance path `<name>-<number>@<assembly>`; a
+nested occurrence would read `<leaf>-<n>@<sub>-<m>@<root>`, leaf first. A face
+table belongs to the nearest preceding record, which
+`DisplayMeshPart.table_offset` locates in the decoded stream returned by
+`extract_file(..., mode="decoded")`, and `<name>-<number>` matches
+`AssemblyComponent.instance_name` and `instance_number`. sldkit does not
+decode this join or apply `raw_transform`, so
+`display.assembly_placement_unverified` stays and callers must not treat the
+tables as component occurrences. In the manifold the stream holds tables for
+one instance of each of its twelve unsuppressed part documents, so even a
+placed display mesh covers 12 of the 24 occurrences in the vendor's STEP
+export.
 
 ## Provenance
 

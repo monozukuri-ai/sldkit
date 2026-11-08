@@ -17,6 +17,8 @@ use crate::common::{
 const CFB_HEADER_LEN: usize = 512;
 const ZLB_MAGIC: &[u8; 16] = b"\x23\x1d\xd5\x71\xda\x81\x48\xa2\xa8\x58\x98\xb2\x1b\x89\xef\x99";
 const ZLB_HEADER_LEN: usize = 24;
+/// Decoded size and member size (both `u32`) in front of every zlib member.
+const ZLB_MEMBER_HEADER_LEN: usize = 8;
 const ZLB_TRAILER_LEN: usize = 8;
 
 #[derive(Clone, Copy)]
@@ -614,26 +616,49 @@ fn decode_zlb(
     if stored.len() == ZLB_HEADER_LEN && expected_size == 0 && member_size == 0 {
         return Ok(Vec::new());
     }
-    let member_size_usize = usize_from_u64(member_size).ok_or(ZlbFailure::NumericRange)?;
-    let member_end =
-        checked_end(ZLB_HEADER_LEN, &[member_size_usize]).ok_or(ZlbFailure::NumericRange)?;
-    let wrapper_end = member_end
-        .checked_add(ZLB_TRAILER_LEN)
-        .ok_or(ZlbFailure::NumericRange)?;
-    if wrapper_end != stored.len() {
-        return Err(ZlbFailure::InvalidWrapper);
+    // A wrapper holds one or more zlib members. The first follows the magic
+    // and its 8-byte (decoded size, member size) header; every further member
+    // repeats only that header. SOLIDWORKS splits payloads above 1 MiB this
+    // way (observed in 2011 and 2012 documents, 1 MiB per member), so a
+    // stream read as a single member looks truncated. The last member is
+    // followed by the 8-byte trailer.
+    let mut output = Vec::new();
+    let mut header_start = ZLB_MAGIC.len();
+    loop {
+        let expected_size =
+            u64::from(u32_le(stored, header_start).ok_or(ZlbFailure::InvalidWrapper)?);
+        let member_size =
+            u64::from(u32_le(stored, header_start + 4).ok_or(ZlbFailure::InvalidWrapper)?);
+        let member_size_usize = usize_from_u64(member_size).ok_or(ZlbFailure::NumericRange)?;
+        let member_start = header_start
+            .checked_add(ZLB_MEMBER_HEADER_LEN)
+            .ok_or(ZlbFailure::NumericRange)?;
+        let member_end =
+            checked_end(member_start, &[member_size_usize]).ok_or(ZlbFailure::NumericRange)?;
+        if member_end > stored.len() {
+            return Err(ZlbFailure::InvalidWrapper);
+        }
+        let decoded = inflate_zlib_bounded(
+            &stored[member_start..member_end],
+            expected_size,
+            already_decoded.saturating_add(saturating_u64(output.len())),
+            limits,
+        )
+        .map_err(|failure| ZlbFailure::Inflate {
+            failure,
+            expected_size,
+            member_size,
+        })?;
+        output.extend_from_slice(&decoded);
+        let remaining = stored.len() - member_end;
+        if remaining == ZLB_TRAILER_LEN {
+            return Ok(output);
+        }
+        if remaining < ZLB_TRAILER_LEN + ZLB_MEMBER_HEADER_LEN {
+            return Err(ZlbFailure::InvalidWrapper);
+        }
+        header_start = member_end;
     }
-    inflate_zlib_bounded(
-        &stored[ZLB_HEADER_LEN..member_end],
-        expected_size,
-        already_decoded,
-        limits,
-    )
-    .map_err(|failure| ZlbFailure::Inflate {
-        failure,
-        expected_size,
-        member_size,
-    })
 }
 
 #[derive(Clone, Copy)]
@@ -894,5 +919,92 @@ mod tests {
         if let Ok(decoded) = decoded {
             assert!(decoded.is_empty());
         }
+    }
+
+    /// Bytes that zlib cannot shrink much, so the compression-ratio limit
+    /// does not interfere.
+    fn noisy_payload(len: usize, mut seed: u32) -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                (seed & 0xff) as u8
+            })
+            .collect()
+    }
+
+    fn zlib_member(payload: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        // writing into memory does not fail; a failure would surface as an
+        // empty member and a failing assertion
+        if encoder.write_all(payload).is_err() {
+            return Vec::new();
+        }
+        encoder.finish().unwrap_or_default()
+    }
+
+    fn size_header(value: usize) -> [u8; 4] {
+        u32::try_from(value).unwrap_or(u32::MAX).to_le_bytes()
+    }
+
+    fn chained_wrapper(payloads: &[Vec<u8>]) -> Vec<u8> {
+        let mut wrapper = Vec::from(ZLB_MAGIC.as_slice());
+        for payload in payloads {
+            let member = zlib_member(payload);
+            wrapper.extend_from_slice(&size_header(payload.len()));
+            wrapper.extend_from_slice(&size_header(member.len()));
+            wrapper.extend_from_slice(&member);
+        }
+        wrapper.extend_from_slice(&[0; 8]);
+        wrapper
+    }
+
+    #[test]
+    fn decodes_the_members_chained_behind_one_magic() {
+        // SOLIDWORKS 2011 / 2012 documents split display lists above 1 MiB into
+        // members that each repeat the 8-byte size header without the magic
+        let payloads = vec![
+            noisy_payload(3000, 0x9e37_79b9),
+            noisy_payload(1234, 0x7f4a_7c15),
+            noisy_payload(17, 0x1234_5678),
+        ];
+        let single = decode_zlb(
+            &chained_wrapper(&payloads[..1]),
+            0,
+            &ResourceLimits::service(),
+        );
+        assert!(single.is_ok());
+        if let Ok(single) = single {
+            assert_eq!(single, payloads[0]);
+        }
+        let chained = decode_zlb(&chained_wrapper(&payloads), 0, &ResourceLimits::service());
+        assert!(chained.is_ok());
+        if let Ok(chained) = chained {
+            assert_eq!(chained, payloads.concat());
+        }
+    }
+
+    #[test]
+    fn rejects_a_member_that_runs_past_the_stream() {
+        let payloads = vec![
+            noisy_payload(3000, 0x9e37_79b9),
+            noisy_payload(1234, 0x7f4a_7c15),
+        ];
+        let wrapper = chained_wrapper(&payloads);
+        // cutting into the last member leaves it incomplete; cutting the trailer
+        // alone leaves a dangling partial header
+        assert!(
+            decode_zlb(
+                &wrapper[..wrapper.len() - 20],
+                0,
+                &ResourceLimits::service()
+            )
+            .is_err()
+        );
+        assert!(decode_zlb(&wrapper[..wrapper.len() - 3], 0, &ResourceLimits::service()).is_err());
     }
 }

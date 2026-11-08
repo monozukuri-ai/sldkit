@@ -8,7 +8,7 @@ describes the supported API, file profiles, and limits.
   comparisons, and boundary diagnostics.
 - [Part validation](part-validation.md): independent SolidWorks API captures
   for bounded orientation and boundary checks.
-- [Assembly validation](assembly-validation.md): placement capture and acceptance
+- [Assembly validation](assembly-validation.md): placement capture, acceptance, and observed evidence
   criteria for future native transform support.
 - [Drawing validation](drawing-validation.md): controlled file pairs and
   independent sheet/view observations.

@@ -153,9 +153,11 @@ pub struct AssemblyComponent {
     /// `swID`: the assembly-local component identity used by display states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component_id: Option<SourceValue<i64>>,
-    /// The 16 exact decimal `swTransform` tokens in source order. Matrix layout,
-    /// length unit, direction, and parent/root basis remain unverified; see
-    /// the assembly validation guide before interpreting them as a placement.
+    /// The 16 exact decimal `swTransform` tokens in source order. On controlled
+    /// files they read as a row-major 4x4 for row vectors in metres; the
+    /// parent/root basis of nested occurrences and the flexible, mirrored, and
+    /// configuration cases remain unverified, so see the assembly validation
+    /// guide before interpreting them as a placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_transform: Option<SourceValue<Vec<String>>>,
     pub source_model_ref: Option<String>,
